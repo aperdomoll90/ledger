@@ -2,3 +2,5 @@
 node_modules/
 dist/
 supabase/.temp/
+.vscode/
+*.log
