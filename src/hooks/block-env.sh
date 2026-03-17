@@ -51,4 +51,17 @@ if [[ "$FILE_PATH" =~ /.aws/credentials ]]; then
   exit 2
 fi
 
+# Block .md file creation — knowledge lives in Ledger, not in local files
+# Allowed exceptions: README.md, CLAUDE.md, MEMORY.md, devlog.md, CHANGELOG.md
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
+if [[ "$TOOL_NAME" == "Write" ]] && [[ "$FILENAME" == *.md ]]; then
+  case "$FILENAME" in
+    README.md|CLAUDE.md|MEMORY.md|devlog.md|CHANGELOG.md) ;;
+    *)
+      echo "BLOCKED: Do not create .md files locally. Write to Ledger instead using add_note or update_note. Allowed: README.md, CLAUDE.md, MEMORY.md, devlog.md" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 exit 0
