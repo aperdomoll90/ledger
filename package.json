@@ -1,0 +1,60 @@
+{
+  "name": "@aperdomoll90/ledger-ai",
+  "version": "1.0.0",
+  "description": "AI identity and memory system — portable persona, knowledge sync, semantic search across agents and devices",
+  "type": "module",
+  "bin": {
+    "ledger": "./dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/migrations/**/*.sql",
+    "dist/hooks/**/*.sh"
+  ],
+  "scripts": {
+    "start": "tsx src/mcp-server.ts",
+    "build": "tsc && cp -r src/migrations dist/migrations && cp -r src/hooks dist/hooks && chmod +x dist/cli.js dist/hooks/*.sh",
+    "prepublishOnly": "npm run build && npm test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "ai",
+    "memory",
+    "knowledge-base",
+    "rag",
+    "semantic-search",
+    "mcp",
+    "supabase",
+    "pgvector",
+    "claude",
+    "agent",
+    "persona",
+    "sync"
+  ],
+  "author": "Adrian Perdomo",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aperdomoll90/ledger"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@supabase/supabase-js": "^2.99.1",
+    "commander": "^14.0.3",
+    "dotenv": "^17.3.1",
+    "openai": "^6.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}
