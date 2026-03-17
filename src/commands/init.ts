@@ -81,22 +81,28 @@ To create a Supabase project:
   writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n');
   console.error('Config saved to ~/.ledger/config.json\n');
 
-  // Step 4: Verify Supabase connection
+  // Step 4: Verify Supabase connection by checking for notes table
   console.error('Connecting to Supabase...');
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   const { error: connError } = await supabase
-    .from('schema_migrations')
-    .select('version')
+    .from('notes')
+    .select('id')
     .limit(1);
 
-  const isNew = connError?.code === '42P01'; // relation does not exist
-  if (connError && !isNew) {
+  // If notes table doesn't exist, it's a new database
+  const isNew = connError !== null;
+  if (isNew && !connError.message.includes('notes')) {
+    // Connection-level error (bad URL, bad key), not just missing table
     console.error(`Connection error: ${connError.message}`);
     console.error('Check your Supabase URL and service role key.');
     process.exit(1);
   }
-  console.error('Connected.\n');
+  if (isNew) {
+    console.error('Connected (new database).\n');
+  } else {
+    console.error('Connected.\n');
+  }
 
   // Step 5: Validate OpenAI key
   console.error('Validating OpenAI key...');
