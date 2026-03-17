@@ -14,6 +14,7 @@ import { backup, enableBackupCron, disableBackupCron } from './commands/backup.j
 import { restore } from './commands/restore.js';
 import { onboard } from './commands/onboard.js';
 import { configGet, configSet, configList } from './commands/config.js';
+import { migrate } from './commands/migrate.js';
 
 process.on('unhandledRejection', (err) => {
   console.error(err instanceof Error ? err.message : String(err));
@@ -171,6 +172,14 @@ setupCmd
   .description('Generate system prompt for ChatGPT (static snapshot)')
   .action(async () => {
     await setupChatgpt();
+  });
+
+program
+  .command('migrate')
+  .description('Safely migrate local files to Ledger (backup, compare, upload)')
+  .action(async () => {
+    const config = loadConfig();
+    await migrate(config);
   });
 
 program.parse();

@@ -5,10 +5,24 @@ import { contentHash } from './hash.js';
 
 // --- Types ---
 
+export interface NoteMetadata {
+  type?: string;
+  agent?: string;
+  project?: string;
+  upsert_key?: string;
+  local_file?: string;
+  content_hash?: string;
+  local_cache?: boolean;
+  chunk_group?: string;
+  chunk_index?: number;
+  total_chunks?: number;
+  [key: string]: unknown; // allow additional fields from Supabase
+}
+
 export interface NoteRow {
   id: number;
   content: string;
-  metadata: Record<string, unknown>;
+  metadata: NoteMetadata;
   created_at: string;
   updated_at: string;
 }
