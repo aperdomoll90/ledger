@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { createRequire } from 'module';
 import { loadConfig } from './lib/config.js';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 import { pull } from './commands/pull.js';
 import { push } from './commands/push.js';
 import { check } from './commands/check.js';
@@ -33,7 +37,7 @@ const program = new Command();
 program
   .name('ledger')
   .description('AI identity and memory system — sync knowledge across agents and devices')
-  .version('1.0.0');
+  .version(version);
 
 program
   .command('pull')
