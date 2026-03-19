@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { getLedgerDir, type HookConfig } from '../lib/config.js';
+import { getLedgerDir, type HookConfig, type NamingConfig } from '../lib/config.js';
 import { confirm } from '../lib/prompt.js';
 
 const CONFIG_PATH = resolve(getLedgerDir(), 'config.json');
@@ -9,6 +9,8 @@ interface FullConfig {
   memoryDir?: string;
   claudeMdPath?: string;
   hooks?: Partial<HookConfig>;
+  naming?: Partial<NamingConfig>;
+  device?: { alias: string };
 }
 
 function loadFullConfig(): FullConfig {
@@ -38,6 +40,15 @@ const DESCRIPTIONS: Record<string, string> = {
   sessionEndCheck: 'Check for unsynced files at session end',
 };
 
+const NAMING_DESCRIPTIONS: Record<string, string> = {
+  'naming.enforce': 'Validate upsert_key format on note creation',
+  'naming.interactive': 'Prompt for missing metadata when creating notes (default: true)',
+};
+
+const DEVICE_DESCRIPTIONS: Record<string, string> = {
+  'device.alias': 'Name for this device',
+};
+
 export async function configGet(key: string): Promise<void> {
   const config = loadFullConfig();
 
@@ -59,6 +70,22 @@ export async function configGet(key: string): Promise<void> {
     return;
   }
 
+  // Check naming settings
+  if (key === 'naming.enforce') {
+    console.log(`naming.enforce: ${config.naming?.enforce ?? false}`);
+    return;
+  }
+  if (key === 'naming.interactive') {
+    console.log(`naming.interactive: ${config.naming?.interactive ?? true} (default: true)`);
+    return;
+  }
+
+  // Check device
+  if (key === 'device.alias') {
+    console.log(`device.alias: ${config.device?.alias || '(not set)'}`);
+    return;
+  }
+
   // Show default
   const defaults: Record<string, unknown> = {
     envBlocking: true,
@@ -72,8 +99,9 @@ export async function configGet(key: string): Promise<void> {
     return;
   }
 
+  const allKeys = [...Object.keys(DESCRIPTIONS), ...Object.keys(NAMING_DESCRIPTIONS), ...Object.keys(DEVICE_DESCRIPTIONS), 'memoryDir', 'claudeMdPath', 'all'];
   console.error(`Unknown config key: ${key}`);
-  console.error(`Available: ${Object.keys(DESCRIPTIONS).join(', ')}, memoryDir, claudeMdPath, all`);
+  console.error(`Available: ${allKeys.join(', ')}`);
   process.exit(1);
 }
 
@@ -111,6 +139,26 @@ export async function configSet(key: string, value: string): Promise<void> {
     return;
   }
 
+  // Handle naming settings
+  const namingKeys = ['naming.enforce', 'naming.interactive'];
+  if (namingKeys.includes(key)) {
+    const boolValue = value === 'true';
+    if (!config.naming) config.naming = {};
+    const field = key.split('.')[1] as keyof NamingConfig;
+    config.naming[field] = boolValue;
+    saveConfig(config);
+    console.error(`${key}: ${boolValue ? 'enabled' : 'disabled'}`);
+    return;
+  }
+
+  // Handle device alias
+  if (key === 'device.alias') {
+    config.device = { alias: value };
+    saveConfig(config);
+    console.error(`device.alias: ${value}`);
+    return;
+  }
+
   // Handle path settings
   if (key === 'memoryDir' || key === 'claudeMdPath') {
     (config as Record<string, unknown>)[key] = value;
@@ -119,8 +167,9 @@ export async function configSet(key: string, value: string): Promise<void> {
     return;
   }
 
+  const allKeys = [...hookKeys, ...namingKeys, 'device.alias', 'memoryDir', 'claudeMdPath'];
   console.error(`Unknown config key: ${key}`);
-  console.error(`Available: ${hookKeys.join(', ')}, memoryDir, claudeMdPath`);
+  console.error(`Available: ${allKeys.join(', ')}`);
   process.exit(1);
 }
 
@@ -134,6 +183,18 @@ export async function configList(): Promise<void> {
     const state = value ? 'enabled' : 'DISABLED';
     console.error(`  ${key}: ${state} — ${desc}`);
   }
+
+  console.error('\nNaming settings:');
+  for (const [key, desc] of Object.entries(NAMING_DESCRIPTIONS)) {
+    const field = key.split('.')[1] as keyof NamingConfig;
+    const defaultVal = field === 'interactive' ? true : false;
+    const value = config.naming?.[field] ?? defaultVal;
+    const state = value ? 'enabled' : 'DISABLED';
+    console.error(`  ${key}: ${state} — ${desc}`);
+  }
+
+  console.error('\nDevice:');
+  console.error(`  device.alias: ${config.device?.alias || '(not set)'}`);
 
   console.error('\nPaths:');
   console.error(`  memoryDir: ${config.memoryDir || '(default)'}`);
