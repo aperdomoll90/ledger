@@ -755,3 +755,89 @@ Complete production features, code review, npm publish.
 
 ### Status
 v1.0.0 published on npm. 13 CLI commands. 32 tests. 5 MCP tools. Hash-based sync. Hooks. Init/setup/onboard.
+
+---
+
+## Session 12 — 2026-03-17
+
+### Goal
+Improve Ledger note management — fix search gaps, prevent note fragmentation, preserve note identity on updates.
+
+### Search Improvements
+- **Search fallback**: when `search_notes` returns 0 results at default threshold (0.5), automatically retries at 0.3 and labels results as low-confidence. Discovered when searching for "installer wizard" failed to find a note containing "Unified Init Wizard."
+- **Duplicate guard on `add_note`**: when no `upsert_key` is provided, searches for similar existing notes (>0.6 similarity) and returns suggestions instead of silently creating a duplicate. Agent must ask user whether to update existing or create new.
+
+### Note Identity Preservation
+- **Real SQL UPDATE**: `update_note` and `add_note` upsert now use `UPDATE` for single-chunk notes instead of delete+insert. Preserves original ID and `created_at`.
+- **ID preservation on chunk changes**: when chunk count changes (requiring delete+insert), the original note ID is passed explicitly on the first insert. `created_at` is also preserved from the old row.
+- All update paths now preserve note identity — IDs are stable across edits.
+
+### Code Extraction
+- Extracted `chunkText` from `mcp-server.ts` into `lib/notes.ts` as an exported function
+- Added 9 unit tests for `chunkText` in `tests/chunk.test.ts` (paragraph splitting, overlap, force-split, content preservation)
+- Total: 54 tests passing across 7 test files
+
+### Hook Update
+- Updated `block-env.sh` to allow `feedback_*.md`, `user_*.md`, `reference_*.md`, `project_*.md` files in the memory directory (`~/.claude/projects/-home-adrian/memory/`)
+- These are local cache files that sync to Ledger — needed for feedback rules that must be in every conversation context
+
+### Note Consolidation
+- Merged fragmented notes into parent notes:
+  - 94 (Architecture) + 95 (System Map) → back into 82 (original Architecture & System Map)
+  - 96 (Setup Guide) + 104 (New Machine Setup) + 106 (Onboarding TODOs) + 107 (Search TODO) → into 86 (Init Design Spec)
+  - 97 (Docs Sync TODO, done) → into 102 (Event Timeline)
+  - Deleted 93 (Session-end hook gaps) after merging TODOs into architecture note
+- Deleted auto-ingested duplicates: 110, 111 (frontmatter copies of feedback file)
+- Net result: ~37 notes from ~46
+
+### Feedback Rules Added
+- `feedback_consolidate_notes.md` — don't fragment notes, track active upsert_keys, ask user before creating vs updating, TODOs live in parent notes
+
+### Status
+54 tests, 7 test files. MCP server rebuilt with search fallback, duplicate guard, ID preservation. Notes consolidated. Needs: MCP restart to pick up new build, upsert_key naming standardization, commit.
+
+---
+
+## Session 15 — 2026-03-18
+
+### Goal
+Implement `delivery` field — replace `local_cache: boolean` with semantic delivery tiers.
+
+### Delivery Field Migration
+- Replaced `local_cache?: boolean` with `delivery?: 'persona' | 'project' | 'knowledge'` in `NoteMetadata` type
+- Replaced all `local_cache: true` writes with `delivery` values in `ingest.ts`, `migrate.ts`, `onboard.ts`
+- Removed deprecated `fetchCachedNotes()` function — all callers now use `fetchPersonaNotes()`
+- Verified no remaining references to `local_cache` in codebase
+
+### inferDelivery() Helper
+- New function in `lib/notes.ts` — maps note type to delivery tier automatically
+- `user-preference`, `feedback` → `persona` (syncs everywhere)
+- `architecture-decision`, `project-status`, `error`, `event` → `project` (repo-specific)
+- `reference`, `general` → `knowledge` (searched on demand)
+- Unknown types default to `knowledge` (cheapest tier)
+- Centralized in `DELIVERY_BY_TYPE` lookup table
+
+### Interactive Delivery Override
+- Interactive `ledger ingest` now shows delivery tier prompt after note type selection
+- Default is pre-selected based on `inferDelivery()`, user can override
+- Auto-ingest still uses `inferDelivery()` without prompting
+
+### Documentation Updates
+- Updated architecture note (ledger-architecture-system-map) — delivery section now documents the full type→delivery mapping, where delivery is set, and marks it as implemented
+- Updated project status — marked delivery + sync as done, renumbered next items
+- Confirmed all existing Supabase notes already had `delivery` field (backfilled in session 14)
+- Confirmed `ledger sync` was already built in session 14
+
+### Init Wizard Design
+- Designed unified init wizard spec via brainstorming skill
+- Approach: replace `init` with smart step-skipping (7 steps, detects what's done)
+- New features: device alias (optional, stored in Ledger as reference note), platform uninstall, multi-platform support with keep/reinstall/uninstall per platform
+- Spec reviewed by code-reviewer agent — fixed credential lifecycle, persona detection, re-run semantics, error handling categories
+- Saved spec to Ledger (ledger-spec-init, note 114) — not local files
+
+### Process Improvements
+- Added feedback rule: save brainstorming specs to Ledger, not `docs/superpowers/specs/`
+- Added feedback rule: session checkpoint protocol — update devlog + project status + architecture after each major task, not just at end of session
+
+### Status
+Build clean, zero TypeScript errors. `delivery` field fully implemented. Init wizard spec complete and reviewed. Next: implementation plan for wizard.

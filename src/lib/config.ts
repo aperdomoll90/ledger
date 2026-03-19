@@ -36,6 +36,7 @@ export interface ConfigFile {
   memoryDir?: string;
   claudeMdPath?: string;
   hooks?: Partial<HookConfig>;
+  device?: { alias: string };
 }
 
 // --- Helpers ---

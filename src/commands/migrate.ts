@@ -2,7 +2,7 @@ import { readFileSync, existsSync, mkdirSync, cpSync, readdirSync } from 'fs';
 import { resolve, basename, join } from 'path';
 import { homedir } from 'os';
 import type { LedgerConfig } from '../lib/config.js';
-import { searchNotes, type NoteRow, type NoteMetadata } from '../lib/notes.js';
+import { searchNotes, inferDelivery, type NoteRow, type NoteMetadata } from '../lib/notes.js';
 import { contentHash } from '../lib/hash.js';
 import { confirm, choose } from '../lib/prompt.js';
 
@@ -97,7 +97,7 @@ async function backupExisting(config: LedgerConfig): Promise<string> {
   return backupDir;
 }
 
-function parseReferences(config: LedgerConfig): Set<string> {
+export function parseReferences(config: LedgerConfig): Set<string> {
   const referenced = new Set<string>();
 
   // Parse MEMORY.md for linked files: [name](filename.md)
@@ -128,7 +128,7 @@ function parseReferences(config: LedgerConfig): Set<string> {
   return referenced;
 }
 
-function getMemoryFiles(config: LedgerConfig): string[] {
+export function getMemoryFiles(config: LedgerConfig): string[] {
   if (!existsSync(config.memoryDir)) return [];
   return readdirSync(config.memoryDir)
     .filter(f => f.endsWith('.md') && f !== 'MEMORY.md');
@@ -458,6 +458,8 @@ async function uploadNewNote(
     .limit(1)
     .single();
 
+  const delivery = inferDelivery(noteType);
+
   if (existing) {
     await updateNote(config, existing.id, content, {
       type: noteType,
@@ -465,9 +467,9 @@ async function uploadNewNote(
       upsert_key: upsertKey,
       local_file: filename,
       content_hash: hash,
-      local_cache: true,
+      delivery,
     });
-    console.error(`  Updated existing note ${existing.id} (type: ${noteType}, cached)`);
+    console.error(`  Updated existing note ${existing.id} (type: ${noteType}, delivery: ${delivery})`);
     return;
   }
 
@@ -481,7 +483,7 @@ async function uploadNewNote(
         upsert_key: upsertKey,
         local_file: filename,
         content_hash: hash,
-        local_cache: true,
+        delivery,
       },
       embedding,
     })
@@ -493,7 +495,7 @@ async function uploadNewNote(
     return;
   }
 
-  console.error(`  Uploaded (note ${data.id}, type: ${noteType}, cached)`);
+  console.error(`  Uploaded (note ${data.id}, type: ${noteType}, delivery: ${delivery})`);
 }
 
 async function uploadFeedbackNote(
@@ -520,7 +522,7 @@ async function uploadFeedbackNote(
         upsert_key: upsertKey,
         local_file: localFile,
         content_hash: hash,
-        local_cache: true,
+        delivery: inferDelivery('feedback'),
       },
       embedding,
     })

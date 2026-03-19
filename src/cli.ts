@@ -5,16 +5,23 @@ import { loadConfig } from './lib/config.js';
 import { pull } from './commands/pull.js';
 import { push } from './commands/push.js';
 import { check } from './commands/check.js';
+import { sync } from './commands/sync.js';
 import { show } from './commands/show.js';
 import { exportNote } from './commands/export.js';
 import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
+import { wizard } from './commands/wizard.js';
 import { setupClaudeCode, setupOpenclaw, setupChatgpt } from './commands/setup.js';
 import { backup, enableBackupCron, disableBackupCron } from './commands/backup.js';
 import { restore } from './commands/restore.js';
 import { onboard } from './commands/onboard.js';
 import { configGet, configSet, configList } from './commands/config.js';
 import { migrate } from './commands/migrate.js';
+import { add } from './commands/add.js';
+import { update } from './commands/update.js';
+import { deleteNote } from './commands/delete.js';
+import { list } from './commands/list.js';
+import { tag } from './commands/tag.js';
 
 process.on('unhandledRejection', (err) => {
   console.error(err instanceof Error ? err.message : String(err));
@@ -48,10 +55,25 @@ program
 
 program
   .command('check')
-  .description('Compare local files vs Ledger, report sync status')
+  .description('Compare local files vs Ledger, report sync status (alias for sync --dry-run)')
   .action(async () => {
     const config = loadConfig();
     await check(config);
+  });
+
+program
+  .command('sync')
+  .description('Bidirectional sync of persona files between Ledger and local cache')
+  .option('-q, --quiet', 'suppress output unless conflicts (for hooks)')
+  .option('-f, --force', 'overwrite local with Ledger version')
+  .option('-n, --dry-run', 'show what would happen without doing it')
+  .action(async (options) => {
+    const config = loadConfig();
+    await sync(config, {
+      quiet: options.quiet ?? false,
+      force: options.force ?? false,
+      dryRun: options.dryRun ?? false,
+    });
   });
 
 program
@@ -144,9 +166,14 @@ program
 
 program
   .command('init')
-  .description('Set up Ledger on this machine (credentials, database schema)')
-  .action(async () => {
-    await init();
+  .description('Guided setup wizard (credentials, database, persona, platforms, sync)')
+  .option('--legacy', 'run legacy init (credentials + database only)')
+  .action(async (options) => {
+    if (options.legacy) {
+      await init();
+    } else {
+      await wizard();
+    }
   });
 
 const setupCmd = program
@@ -180,6 +207,73 @@ program
   .action(async () => {
     const config = loadConfig();
     await migrate(config);
+  });
+
+program
+  .command('add')
+  .description('Add a new note to Ledger (with duplicate detection)')
+  .requiredOption('-c, --content <content>', 'note content (or use stdin)')
+  .requiredOption('-t, --type <type>', 'note type (feedback, reference, event, etc.)')
+  .option('-a, --agent <agent>', 'agent name', 'cli')
+  .option('-p, --project <project>', 'project name')
+  .option('-k, --upsert-key <key>', 'upsert key for dedup')
+  .option('-f, --force', 'skip duplicate check')
+  .action(async (options) => {
+    const config = loadConfig();
+    await add(config, options.content, {
+      type: options.type,
+      agent: options.agent,
+      project: options.project,
+      upsertKey: options.upsertKey,
+      force: options.force ?? false,
+    });
+  });
+
+program
+  .command('update <id>')
+  .description('Update an existing note by ID (with confirmation)')
+  .requiredOption('-c, --content <content>', 'new content')
+  .action(async (id: string, options) => {
+    const config = loadConfig();
+    await update(config, parseInt(id, 10), options.content, {});
+  });
+
+program
+  .command('delete <id>')
+  .description('Delete a note by ID (with confirmation)')
+  .action(async (id: string) => {
+    const config = loadConfig();
+    await deleteNote(config, parseInt(id, 10));
+  });
+
+program
+  .command('list')
+  .description('List recent notes from Ledger')
+  .option('-n, --limit <number>', 'number of notes', '20')
+  .option('-t, --type <type>', 'filter by note type')
+  .option('-p, --project <project>', 'filter by project name')
+  .action(async (options) => {
+    const config = loadConfig();
+    await list(config, {
+      limit: parseInt(options.limit, 10),
+      type: options.type,
+      project: options.project,
+    });
+  });
+
+program
+  .command('tag <id>')
+  .description('Update metadata on a note (description, project, scope)')
+  .option('-d, --description <text>', 'note description/purpose')
+  .option('-p, --project <name>', 'project name')
+  .option('-s, --scope <scope>', 'scope (user, system, general)')
+  .action(async (id: string, options) => {
+    const config = loadConfig();
+    await tag(config, parseInt(id, 10), {
+      description: options.description,
+      project: options.project,
+      scope: options.scope,
+    });
   });
 
 program.parse();

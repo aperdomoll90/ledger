@@ -1,18 +1,33 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { ask, askMasked, confirm } from '../lib/prompt.js';
 import { getLedgerDir, loadConfigFile, getDefaultConfig } from '../lib/config.js';
 import { getMigrationFiles, readMigration } from '../lib/migrate.js';
 import { enableBackupCron } from './backup.js';
 
-export async function init(): Promise<void> {
+// --- Exported types ---
+
+export interface RawCredentials {
+  supabaseUrl: string;
+  supabaseKey: string;
+  openaiKey: string;
+}
+
+export interface ConnectResult {
+  supabase: SupabaseClient;
+  openai: OpenAI;
+  noteCount: number;
+}
+
+// --- Extracted helpers ---
+
+/** Gather or load credentials. Returns raw values for use before loadConfig() is safe. */
+export async function gatherCredentials(): Promise<RawCredentials> {
   const ledgerDir = getLedgerDir();
   const envPath = resolve(ledgerDir, '.env');
   const configPath = resolve(ledgerDir, 'config.json');
-
-  console.error('Welcome to Ledger.\n');
 
   mkdirSync(ledgerDir, { recursive: true });
 
@@ -20,7 +35,7 @@ export async function init(): Promise<void> {
   let supabaseKey = '';
   let openaiKey = '';
 
-  // Step 1: Check existing credentials
+  // Check existing credentials
   if (existsSync(envPath)) {
     const overwrite = await confirm('Existing credentials found. Overwrite?');
     if (!overwrite) {
@@ -38,7 +53,7 @@ export async function init(): Promise<void> {
     }
   }
 
-  // Step 2: Get credentials
+  // Prompt for credentials if not loaded
   if (!supabaseUrl) {
     const hasProject = await confirm('Do you have a Supabase project?');
 
@@ -70,7 +85,7 @@ To create a Supabase project:
     console.error('Credentials saved to ~/.ledger/.env\n');
   }
 
-  // Step 3: Write/merge config.json
+  // Write/merge config.json
   const existing = loadConfigFile();
   const defaults = getDefaultConfig();
   const merged = {
@@ -81,22 +96,57 @@ To create a Supabase project:
   writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n');
   console.error('Config saved to ~/.ledger/config.json\n');
 
-  // Step 4: Verify Supabase connection by checking for notes table
+  return { supabaseUrl, supabaseKey, openaiKey };
+}
+
+/** Check if credentials file exists and has all required keys. */
+export function hasCredentials(): boolean {
+  const envPath = resolve(getLedgerDir(), '.env');
+  if (!existsSync(envPath)) return false;
+  const content = readFileSync(envPath, 'utf-8');
+  return content.includes('SUPABASE_URL=') &&
+    content.includes('SUPABASE_SERVICE_ROLE_KEY=') &&
+    content.includes('OPENAI_API_KEY=');
+}
+
+/** Read raw credentials from the .env file without prompting. */
+export function readCredentials(): RawCredentials | null {
+  const envPath = resolve(getLedgerDir(), '.env');
+  if (!existsSync(envPath)) return null;
+
+  let supabaseUrl = '';
+  let supabaseKey = '';
+  let openaiKey = '';
+
+  const content = readFileSync(envPath, 'utf-8');
+  for (const line of content.split('\n')) {
+    const eqIndex = line.indexOf('=');
+    if (eqIndex === -1) continue;
+    const key = line.slice(0, eqIndex);
+    const value = line.slice(eqIndex + 1);
+    if (key === 'SUPABASE_URL') supabaseUrl = value;
+    if (key === 'SUPABASE_SERVICE_ROLE_KEY') supabaseKey = value;
+    if (key === 'OPENAI_API_KEY') openaiKey = value;
+  }
+
+  if (!supabaseUrl || !supabaseKey || !openaiKey) return null;
+  return { supabaseUrl, supabaseKey, openaiKey };
+}
+
+/** Connect to Supabase + OpenAI, run migrations if needed. Returns clients + note count. */
+export async function connectAndMigrate(creds: RawCredentials): Promise<ConnectResult> {
+  // Verify Supabase connection
   console.error('Connecting to Supabase...');
-  const supabase = createClient(supabaseUrl, supabaseKey);
+  const supabase = createClient(creds.supabaseUrl, creds.supabaseKey);
 
   const { error: connError } = await supabase
     .from('notes')
     .select('id')
     .limit(1);
 
-  // If notes table doesn't exist, it's a new database
   const isNew = connError !== null;
   if (isNew && !connError.message.includes('notes')) {
-    // Connection-level error (bad URL, bad key), not just missing table
-    console.error(`Connection error: ${connError.message}`);
-    console.error('Check your Supabase URL and service role key.');
-    process.exit(1);
+    throw new Error(`Connection error: ${connError.message}`);
   }
   if (isNew) {
     console.error('Connected (new database).\n');
@@ -104,19 +154,18 @@ To create a Supabase project:
     console.error('Connected.\n');
   }
 
-  // Step 5: Validate OpenAI key
+  // Validate OpenAI key
   console.error('Validating OpenAI key...');
+  const openai = new OpenAI({ apiKey: creds.openaiKey });
   try {
-    const openai = new OpenAI({ apiKey: openaiKey });
     await openai.embeddings.create({ model: 'text-embedding-3-small', input: 'test' });
     console.error('OpenAI key valid.\n');
   } catch (e) {
-    console.error(`OpenAI key invalid: ${(e as Error).message}`);
-    console.error('Check your OpenAI API key.');
-    process.exit(1);
+    throw new Error(`OpenAI key invalid: ${(e as Error).message}`);
   }
 
-  // Step 6: Run migrations or confirm existing
+  // Run migrations if new database
+  let noteCount = 0;
   if (isNew) {
     console.error('New database detected. Setting up schema...\n');
     const files = getMigrationFiles();
@@ -132,15 +181,13 @@ To create a Supabase project:
     console.error('');
     await ask('Press Enter after running the SQL...');
 
-    // Verify
     const { error: verifyError } = await supabase
       .from('notes')
       .select('id')
       .limit(1);
 
     if (verifyError) {
-      console.error('Notes table not found. Make sure you ran all the SQL above.');
-      process.exit(1);
+      throw new Error('Notes table not found. Make sure you ran all the SQL above.');
     }
 
     console.error('Schema verified.\n');
@@ -148,10 +195,27 @@ To create a Supabase project:
     const { count } = await supabase
       .from('notes')
       .select('*', { count: 'exact', head: true });
-    console.error(`Found existing Ledger with ${count ?? 0} notes.\n`);
+    noteCount = count ?? 0;
+    console.error(`Found existing Ledger with ${noteCount} notes.\n`);
   }
 
-  // Step 7: Offer daily backup
+  return { supabase, openai, noteCount };
+}
+
+// --- Standalone init command (delegates to helpers) ---
+
+export async function init(): Promise<void> {
+  console.error('Welcome to Ledger.\n');
+
+  const creds = await gatherCredentials();
+
+  try {
+    await connectAndMigrate(creds);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
+
   const wantBackup = await confirm('Enable daily local backup? (Saves all notes to ~/.ledger/backups/ at 1am)');
   if (wantBackup) {
     enableBackupCron();

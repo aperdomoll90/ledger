@@ -1,10 +1,10 @@
 #!/bin/bash
 # Session end: run hash-based sync check + temp file alert
 
-OUTPUT=$(ledger check 2>/dev/null)
+OUTPUT=$(ledger sync --dry-run 2>&1)
 
-# Only show output if there are issues (not "All synced.")
-if ! echo "$OUTPUT" | grep -q "All synced"; then
+# Only show output if there are changes to sync
+if ! echo "$OUTPUT" | grep -q "nothing to do"; then
   echo "$OUTPUT"
 fi
 

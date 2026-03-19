@@ -1,10 +1,10 @@
-import { writeFileSync, readFileSync, copyFileSync, mkdirSync, existsSync, chmodSync } from 'fs';
+import { writeFileSync, readFileSync, copyFileSync, mkdirSync, existsSync, chmodSync, unlinkSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import { homedir } from 'os';
 import { loadConfig, loadConfigFile, getLedgerDir, type HookConfig } from '../lib/config.js';
-import { fetchCachedNotes } from '../lib/notes.js';
+import { fetchPersonaNotes } from '../lib/notes.js';
 import { generateClaudeMd } from '../lib/generators.js';
 import { ask } from '../lib/prompt.js';
 
@@ -15,6 +15,105 @@ function verifyInit(): void {
   if (!existsSync(envPath)) {
     console.error('Ledger not initialized. Run `ledger init` first.');
     process.exit(1);
+  }
+}
+
+// --- Platform detection ---
+
+export type PlatformName = 'claude-code' | 'openclaw' | 'chatgpt';
+
+export interface PlatformStatus {
+  name: PlatformName;
+  installed: boolean;
+  detail?: string;
+}
+
+/** Detect whether a platform is currently installed/configured. */
+export function detectPlatform(name: PlatformName): PlatformStatus {
+  switch (name) {
+    case 'claude-code': {
+      try {
+        const output = execFileSync('claude', ['mcp', 'list'], { stdio: 'pipe', encoding: 'utf-8' });
+        const installed = output.toLowerCase().includes('ledger');
+        return { name, installed, detail: installed ? 'MCP registered' : 'Claude Code found, Ledger not registered' };
+      } catch {
+        return { name, installed: false, detail: 'Claude Code CLI not found' };
+      }
+    }
+    case 'openclaw': {
+      // Check common locations for SOUL.md + USER.md
+      const configFile = loadConfigFile();
+      const openclawPath = (configFile as Record<string, unknown>).openclawPath as string | undefined;
+      if (openclawPath && existsSync(resolve(openclawPath, 'SOUL.md')) && existsSync(resolve(openclawPath, 'USER.md'))) {
+        return { name, installed: true, detail: openclawPath };
+      }
+      return { name, installed: false };
+    }
+    case 'chatgpt': {
+      // ChatGPT has no persistent state — never detected as installed
+      return { name, installed: false, detail: 'No persistent state' };
+    }
+  }
+}
+
+// --- Uninstall functions ---
+
+/** Remove Ledger MCP registration, hooks, and settings entries for Claude Code. */
+export function uninstallClaudeCode(): void {
+  // 1. Remove MCP registration
+  try {
+    execFileSync('claude', ['mcp', 'remove', 'ledger', '-s', 'user'], { stdio: 'pipe' });
+    console.error('  Removed MCP registration.');
+  } catch {
+    console.error('  MCP registration not found (already removed).');
+  }
+
+  // 2. Remove hook files
+  const claudeHooksDir = resolve(homedir(), '.claude/hooks');
+  const hookFiles = ['block-env.sh', 'post-write-ledger.sh', 'session-end-check.sh'];
+  for (const file of hookFiles) {
+    const hookPath = resolve(claudeHooksDir, file);
+    if (existsSync(hookPath)) {
+      unlinkSync(hookPath);
+      console.error(`  Removed ${file}`);
+    }
+  }
+
+  // 3. Remove Ledger hook entries from settings.json
+  const settingsPath = resolve(homedir(), '.claude/settings.json');
+  if (existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>;
+      if (settings.hooks) {
+        delete settings.hooks;
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        console.error('  Removed hook entries from settings.json');
+      }
+    } catch {
+      // Settings parse error — leave as-is
+    }
+  }
+}
+
+/** Remove SOUL.md and USER.md from OpenClaw workspace. */
+export function uninstallOpenclaw(path?: string): void {
+  const configFile = loadConfigFile();
+  const targetPath = path || (configFile as Record<string, unknown>).openclawPath as string | undefined;
+  if (!targetPath) {
+    console.error('  No OpenClaw workspace path configured.');
+    return;
+  }
+
+  const soulPath = resolve(targetPath, 'SOUL.md');
+  const userPath = resolve(targetPath, 'USER.md');
+
+  if (existsSync(soulPath)) {
+    unlinkSync(soulPath);
+    console.error('  Removed SOUL.md');
+  }
+  if (existsSync(userPath)) {
+    unlinkSync(userPath);
+    console.error('  Removed USER.md');
   }
 }
 
@@ -116,7 +215,7 @@ export async function setupOpenclaw(path?: string): Promise<void> {
 
   console.error(`Setting up OpenClaw at ${targetPath}...\n`);
 
-  const notes = await fetchCachedNotes(config.supabase);
+  const notes = await fetchPersonaNotes(config.supabase);
   const userNotes = notes.filter(n => (n.metadata.type as string) === 'user-preference');
   const feedbackNotes = notes.filter(n => (n.metadata.type as string) === 'feedback');
 
@@ -137,7 +236,7 @@ export async function setupChatgpt(): Promise<void> {
   verifyInit();
   const config = loadConfig();
 
-  const notes = await fetchCachedNotes(config.supabase);
+  const notes = await fetchPersonaNotes(config.supabase);
   const feedbackNotes = notes.filter(n => (n.metadata.type as string) === 'feedback');
 
   const prompt = generateClaudeMd(feedbackNotes);

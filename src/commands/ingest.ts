@@ -1,7 +1,7 @@
 import { readFileSync, unlinkSync, readdirSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { fetchCachedNotes, searchNotes, type NoteRow } from '../lib/notes.js';
+import { fetchPersonaNotes, findNoteByFile, searchNotes, inferDelivery, type NoteRow } from '../lib/notes.js';
 import { contentHash } from '../lib/hash.js';
 import { confirm, choose } from '../lib/prompt.js';
 
@@ -11,7 +11,7 @@ interface IngestOptions {
 }
 
 export async function ingest(config: LedgerConfig, options: IngestOptions): Promise<void> {
-  const existingNotes = await fetchCachedNotes(config.supabase);
+  const existingNotes = await fetchPersonaNotes(config.supabase);
 
   if (options.file) {
     if (options.auto) {
@@ -133,6 +133,13 @@ async function ingestFile(config: LedgerConfig, filePath: string, existingNotes:
     'general',
   ]);
 
+  const defaultDelivery = inferDelivery(noteType);
+  const deliveryChoice = await choose(`Delivery tier (default: ${defaultDelivery}):`, [
+    `${defaultDelivery} (default)`,
+    ...(['persona', 'project', 'knowledge'] as const).filter(d => d !== defaultDelivery),
+  ]);
+  const delivery = deliveryChoice.replace(' (default)', '') as 'persona' | 'project' | 'knowledge';
+
   const { openai } = config;
   const embeddingResponse = await openai.embeddings.create({
     model: 'text-embedding-3-small',
@@ -152,7 +159,7 @@ async function ingestFile(config: LedgerConfig, filePath: string, existingNotes:
         upsert_key: upsertKey,
         local_file: filename,
         content_hash: hash,
-        local_cache: true,
+        delivery,
       },
       embedding,
     })
@@ -164,7 +171,7 @@ async function ingestFile(config: LedgerConfig, filePath: string, existingNotes:
     return;
   }
 
-  console.error(`Added "${filename}" → Ledger (note ${data.id})`);
+  console.error(`Added "${filename}" → Ledger (note ${data.id}, delivery: ${delivery})`);
   await askDeleteLocal(filePath, filename);
 }
 
@@ -220,11 +227,21 @@ async function autoIngestFile(config: LedgerConfig, filePath: string, existingNo
   const exactMatch = existingNotes.find(n => (n.metadata as Record<string, unknown>).content_hash === hash);
 
   if (exactMatch) {
-    unlinkSync(filePath);
-    console.error(`AUTO: ${filename} — identical to existing note, deleted local.`);
+    console.error(`AUTO: ${filename} — identical to existing note, skipped.`);
     return;
   }
 
+  // Check if a note already exists for this file (by local_file or upsert_key)
+  const existingNote = await findNoteByFile(config.supabase, filename);
+
+  if (existingNote) {
+    // Update existing note instead of creating a duplicate
+    await updateAndHash(config, existingNote.id, content);
+    console.error(`AUTO: ${filename} — updated existing note ${existingNote.id}.`);
+    return;
+  }
+
+  // No existing note — create new
   // Infer type from filename
   let noteType = 'general';
   if (filename.startsWith('feedback_')) noteType = 'feedback';
@@ -250,7 +267,7 @@ async function autoIngestFile(config: LedgerConfig, filePath: string, existingNo
         upsert_key: upsertKey,
         local_file: filename,
         content_hash: hash,
-        local_cache: true,
+        delivery: inferDelivery(noteType),
       },
       embedding,
     })
@@ -262,6 +279,5 @@ async function autoIngestFile(config: LedgerConfig, filePath: string, existingNo
     return;
   }
 
-  unlinkSync(filePath);
-  console.error(`AUTO: ${filename} → Ledger (note ${data.id}), deleted local.`);
+  console.error(`AUTO: ${filename} → Ledger (note ${data.id}, delivery: ${inferDelivery(noteType)}).`);
 }

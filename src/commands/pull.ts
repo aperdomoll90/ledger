@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { fetchCachedNotes, updateNoteHash } from '../lib/notes.js';
+import { fetchPersonaNotes, updateNoteHash } from '../lib/notes.js';
 import { contentHash } from '../lib/hash.js';
 import { generateClaudeMd, generateMemoryMd } from '../lib/generators.js';
 
@@ -12,7 +12,7 @@ interface PullOptions {
 
 export async function pull(config: LedgerConfig, options: PullOptions): Promise<void> {
   const { quiet, force } = options;
-  const notes = await fetchCachedNotes(config.supabase);
+  const notes = await fetchPersonaNotes(config.supabase);
 
   if (notes.length === 0) {
     if (!quiet) console.error('No cached notes found in Ledger.');
@@ -72,7 +72,7 @@ export async function pull(config: LedgerConfig, options: PullOptions): Promise<
 
 function writeGeneratedFiles(
   config: LedgerConfig,
-  notes: Awaited<ReturnType<typeof fetchCachedNotes>>,
+  notes: Awaited<ReturnType<typeof fetchPersonaNotes>>,
   writtenFiles: string[],
   conflicts: string[],
   force: boolean,

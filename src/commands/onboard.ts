@@ -1,6 +1,6 @@
 import type { LedgerConfig } from '../lib/config.js';
 import { getLedgerDir } from '../lib/config.js';
-import { fetchCachedNotes } from '../lib/notes.js';
+import { fetchPersonaNotes } from '../lib/notes.js';
 import { contentHash } from '../lib/hash.js';
 import { ask, confirm, choose } from '../lib/prompt.js';
 import { existsSync } from 'fs';
@@ -53,7 +53,7 @@ export async function onboard(config: LedgerConfig): Promise<void> {
   }
 
   // Check if persona already exists
-  const existing = await fetchCachedNotes(config.supabase);
+  const existing = await fetchPersonaNotes(config.supabase);
   const hasProfile = existing.some(n => (n.metadata as Record<string, unknown>).type === 'user-preference');
   const hasFeedback = existing.some(n => (n.metadata as Record<string, unknown>).type === 'feedback');
 
@@ -223,7 +223,7 @@ async function createNote(config: LedgerConfig, input: NoteInput): Promise<void>
         agent: 'ledger-onboard',
         upsert_key: upsertKey,
         local_file: localFile,
-        local_cache: true,
+        delivery: 'persona',
         content_hash: contentHash(content),
       },
       embedding,
