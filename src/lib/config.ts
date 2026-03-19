@@ -25,6 +25,11 @@ export interface HookConfig {
   sessionEndCheck: boolean;
 }
 
+export interface NamingConfig {
+  enforce: boolean;
+  interactive: boolean;
+}
+
 export interface LedgerConfig {
   memoryDir: string;
   claudeMdPath: string;
@@ -36,6 +41,7 @@ export interface ConfigFile {
   memoryDir?: string;
   claudeMdPath?: string;
   hooks?: Partial<HookConfig>;
+  naming?: Partial<NamingConfig>;
   device?: { alias: string };
 }
 

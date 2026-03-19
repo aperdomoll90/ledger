@@ -45,23 +45,31 @@ const DEFAULT_KNOWLEDGE_RULES = `- Ledger is the source of truth for all knowled
 
 // --- Onboard ---
 
-export async function onboard(config: LedgerConfig): Promise<void> {
+export interface OnboardOptions {
+  skipExistingCheck?: boolean;
+}
+
+export async function onboard(config: LedgerConfig, options: OnboardOptions = {}): Promise<void> {
   const envPath = resolve(getLedgerDir(), '.env');
   if (!existsSync(envPath)) {
     console.error('Ledger not initialized. Run `ledger init` first.');
     process.exit(1);
   }
 
-  // Check if persona already exists
-  const existing = await fetchPersonaNotes(config.supabase);
-  const hasProfile = existing.some(n => (n.metadata as Record<string, unknown>).type === 'user-preference');
-  const hasFeedback = existing.some(n => (n.metadata as Record<string, unknown>).type === 'feedback');
+  // Check if persona already exists (skip when called from wizard, which handles this itself)
+  if (!options.skipExistingCheck) {
+    const existing = await fetchPersonaNotes(config.supabase);
+    const hasProfile = existing.some(n => (n.metadata as Record<string, unknown>).type === 'user-preference');
+    const hasFeedback = existing.some(n => (n.metadata as Record<string, unknown>).type === 'feedback');
 
-  if (hasProfile || hasFeedback) {
-    const proceed = await confirm('Persona notes already exist in Ledger. Run onboarding again? (will add, not replace)');
-    if (!proceed) {
-      console.error('Cancelled.');
-      return;
+    if (hasProfile || hasFeedback) {
+      console.error('You already have persona notes in Ledger (profile, communication style, etc.).');
+      console.error('Running onboarding again will create new notes for any missing fields — existing ones are kept as-is.\n');
+      const proceed = await confirm('Continue?');
+      if (!proceed) {
+        console.error('Cancelled.');
+        return;
+      }
     }
   }
 

@@ -217,11 +217,13 @@ program
   .command('add')
   .description('Add a new note to Ledger (with duplicate detection)')
   .requiredOption('-c, --content <content>', 'note content (or use stdin)')
-  .requiredOption('-t, --type <type>', 'note type (feedback, reference, event, etc.)')
+  .option('-t, --type <type>', 'note type (feedback, reference, event, etc.)')
   .option('-a, --agent <agent>', 'agent name', 'cli')
   .option('-p, --project <project>', 'project name')
   .option('-k, --upsert-key <key>', 'upsert key for dedup')
-  .option('-f, --force', 'skip duplicate check')
+  .option('-d, --description <text>', 'one-line description of the note')
+  .option('-s, --status <status>', 'note status (idea, planning, active, done)')
+  .option('-f, --force', 'skip duplicate check and interactive prompts')
   .action(async (options) => {
     const config = loadConfig();
     await add(config, options.content, {
@@ -229,6 +231,8 @@ program
       agent: options.agent,
       project: options.project,
       upsertKey: options.upsertKey,
+      description: options.description,
+      status: options.status,
       force: options.force ?? false,
     });
   });

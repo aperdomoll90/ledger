@@ -3,16 +3,21 @@ import type OpenAI from 'openai';
 import { randomUUID, createHash } from 'crypto';
 import { fatal, ExitCode } from './errors.js';
 import { contentHash } from './hash.js';
+import { loadConfigFile } from './config.js';
 
 // --- Types ---
+
+export type NoteStatus = 'idea' | 'planning' | 'active' | 'done';
 
 export interface NoteMetadata {
   type?: string;
   agent?: string;
   project?: string;
+  status?: NoteStatus;
   upsert_key?: string;
   local_file?: string;
   content_hash?: string;
+  description?: string;
   delivery?: 'persona' | 'project' | 'knowledge';
   chunk_group?: string;
   chunk_index?: number;
@@ -272,6 +277,143 @@ function formatNotePreview(
   return `"${label}" (id: ${id}) | type: ${noteType || '-'} | project: ${project || '-'}${descLine}\n  ${preview}${truncated}`;
 }
 
+// --- Naming Conventions ---
+
+/** Valid type prefixes for upsert_key naming. */
+const TYPE_PREFIXES: Record<string, string[]> = {
+  'feedback': ['feedback'],
+  'user-preference': ['user'],
+  'architecture-decision': ['spec', 'architecture'],
+  'project-status': ['project-status'],
+  'reference': ['reference'],
+  'event': ['devlog', 'event'],
+  'error': ['errorlog', 'error'],
+  'general': ['general'],
+};
+
+/**
+ * Validate upsert_key format: {prefix}-{topic} or {project}-{prefix}-{topic}
+ * Returns null if valid, error message if invalid.
+ */
+export function validateNaming(
+  upsertKey: string,
+  type: string,
+  description: string | undefined,
+): string | null {
+  if (!upsertKey) {
+    return 'upsert_key is required when naming enforcement is enabled.';
+  }
+
+  if (!description) {
+    return 'description is required when naming enforcement is enabled. Add a one-line description of what this note IS and what it\'s FOR.';
+  }
+
+  // Check format: lowercase, hyphens, no underscores or special chars
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(upsertKey)) {
+    return `Invalid upsert_key format "${upsertKey}". Use lowercase-hyphenated (e.g., "feedback-communication-style").`;
+  }
+
+  // Check that the key contains a valid prefix for this type
+  const validPrefixes = TYPE_PREFIXES[type];
+  if (validPrefixes) {
+    const parts = upsertKey.split('-');
+    // Match prefix at start, or after a project name segment
+    const hasValidPrefix = validPrefixes.some(prefix => {
+      const prefixParts = prefix.split('-');
+      // Direct match: prefix-topic
+      if (parts.slice(0, prefixParts.length).join('-') === prefix) return true;
+      // Project-scoped: project-prefix or project-prefix-topic
+      if (parts.length >= prefixParts.length + 1) {
+        const afterProject = parts.slice(1, 1 + prefixParts.length).join('-');
+        if (afterProject === prefix) return true;
+      }
+      return false;
+    });
+
+    if (!hasValidPrefix) {
+      return `upsert_key "${upsertKey}" doesn't match type "${type}". Expected prefix: ${validPrefixes.join(' or ')}. Examples: "${validPrefixes[0]}-my-topic" or "myproject-${validPrefixes[0]}-my-topic".`;
+    }
+  }
+
+  return null;
+}
+
+/** Derive local_file from upsert_key: feedback-style → feedback_style.md */
+export function deriveLocalFile(upsertKey: string): string {
+  return upsertKey.replace(/-/g, '_') + '.md';
+}
+
+/** Check if naming enforcement is enabled in config. */
+function isNamingEnforced(): boolean {
+  const config = loadConfigFile();
+  return config.naming?.enforce === true;
+}
+
+/** Check if interactive metadata prompting is enabled (default: true). */
+function isInteractive(): boolean {
+  const config = loadConfigFile();
+  return config.naming?.interactive !== false;
+}
+
+/** Valid note types for the interactive prompt. */
+export const NOTE_TYPES = [
+  'user-preference',
+  'feedback',
+  'architecture-decision',
+  'project-status',
+  'reference',
+  'event',
+  'error',
+  'knowledge-guide',
+  'general',
+] as const;
+
+/** Valid statuses for notes. */
+export const NOTE_STATUSES: NoteStatus[] = ['idea', 'planning', 'active', 'done'];
+
+/**
+ * Check if metadata is complete enough to skip interactive prompting.
+ * Returns null if complete, or a structured prompt message if fields are missing.
+ */
+export function checkMetadataCompleteness(
+  metadata: Record<string, unknown>,
+  type: string,
+): string | null {
+  const missing: string[] = [];
+
+  if (!metadata.description) {
+    missing.push('description');
+  }
+
+  if (!metadata.upsert_key) {
+    missing.push('upsert_key');
+  }
+
+  // Only ask for status on project-scoped types
+  const projectTypes = ['architecture-decision', 'project-status', 'event', 'error'];
+  if (projectTypes.includes(type) && !metadata.status) {
+    missing.push('status');
+  }
+
+  if (missing.length === 0) return null;
+
+  const fields: string[] = [];
+
+  if (missing.includes('description')) {
+    fields.push('- **description**: One line explaining what this note IS and what it\'s FOR');
+  }
+
+  if (missing.includes('upsert_key')) {
+    fields.push('- **upsert_key**: A unique identifier for this note (lowercase-hyphenated, e.g., "feedback-my-rule" or "myproject-spec-feature")');
+  }
+
+  if (missing.includes('status')) {
+    fields.push('- **status**: What stage is this? Options: idea, planning, active, done');
+  }
+
+  return `METADATA NEEDED — ask the user for these fields before saving:\n\n${fields.join('\n')}\n\nIf the user wants to skip, re-call add_note with metadata field \`interactive_skip: true\` to use defaults.`;
+}
+
 // --- Shared Operations (called by both MCP and CLI) ---
 
 export async function opSearchNotes(
@@ -405,8 +547,39 @@ export async function opAddNote(
   metadata: Record<string, unknown>,
   force: boolean,
 ): Promise<OperationResult> {
-  const fullMetadata = { ...metadata, type, agent, content_hash: contentHash(content) };
   const upsertKey = metadata.upsert_key as string | undefined;
+  const description = metadata.description as string | undefined;
+  const skippedInteractive = metadata.interactive_skip === true;
+
+  // Interactive metadata prompting (default: on, opt-out via config)
+  // Skip if user explicitly opted out via interactive_skip flag
+  if (!skippedInteractive && isInteractive()) {
+    const prompt = checkMetadataCompleteness(metadata, type);
+    if (prompt) {
+      return { status: 'confirm', message: prompt };
+    }
+  }
+
+  // Clean up the skip flag before saving
+  delete metadata.interactive_skip;
+
+  // Naming enforcement (opt-in via config)
+  if (isNamingEnforced()) {
+    const namingError = validateNaming(upsertKey || '', type, description);
+    if (namingError) {
+      return { status: 'error', message: `Naming violation: ${namingError}` };
+    }
+  }
+
+  // Auto-derive local_file from upsert_key for persona notes
+  if (upsertKey && !metadata.local_file) {
+    const delivery = metadata.delivery as string | undefined || inferDelivery(type);
+    if (delivery === 'persona') {
+      metadata.local_file = deriveLocalFile(upsertKey);
+    }
+  }
+
+  const fullMetadata = { ...metadata, type, agent, content_hash: contentHash(content) };
 
   // Duplicate guard: if no upsert_key and not forced, check for similar notes
   if (!upsertKey && !force) {

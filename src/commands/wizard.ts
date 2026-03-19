@@ -112,11 +112,11 @@ export async function wizard(): Promise<void> {
     console.error(`Step 4: Persona: found\n`);
     const update = await confirm('  Update persona?');
     if (update) {
-      await onboard(config);
+      await onboard(config, { skipExistingCheck: true });
     }
   } else {
     console.error('Step 4: Build persona\n');
-    await runSkippable('Persona', () => onboard(config!));
+    await runSkippable('Persona', () => onboard(config!, { skipExistingCheck: true }));
   }
 
   // Step 5: Platforms
