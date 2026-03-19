@@ -18,7 +18,10 @@
     "prepublishOnly": "npm run build && npm test",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "preversion": "npm run typecheck && npm test",
+    "ship": "bash scripts/ship.sh",
+    "release": "npm version patch && npm publish --access public"
   },
   "keywords": [
     "ai",
