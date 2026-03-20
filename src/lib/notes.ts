@@ -407,9 +407,6 @@ function isInteractive(): boolean {
   return config.naming?.interactive !== false;
 }
 
-/** @deprecated Use getRegisteredTypes() instead */
-export const NOTE_TYPES = Object.keys(BUILTIN_TYPES);
-
 /** Valid statuses for notes. */
 export const NOTE_STATUSES: NoteStatus[] = ['idea', 'planning', 'active', 'done'];
 
