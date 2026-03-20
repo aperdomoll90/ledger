@@ -3,7 +3,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { resolve } from 'path';
 import { homedir } from 'os';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fatal, ExitCode } from './errors.js';
 
 // --- Defaults ---
@@ -60,6 +60,12 @@ export function loadConfigFile(): ConfigFile {
     }
   }
   return {};
+}
+
+export function saveConfigFile(config: ConfigFile): void {
+  const configPath = resolve(getLedgerDir(), 'config.json');
+  mkdirSync(getLedgerDir(), { recursive: true });
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 }
 
 export function getDefaultConfig(): ConfigFile {
