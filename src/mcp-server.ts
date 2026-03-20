@@ -11,6 +11,7 @@ import {
   opUpdateNote,
   opUpdateMetadata,
   opDeleteNote,
+  getTypeRegistry,
   type Clients,
 } from './lib/notes.js';
 
@@ -33,6 +34,12 @@ const clients: Clients = {
   supabase: createClient(supabaseUrl, supabaseKey),
   openai: new OpenAI({ apiKey: openaiKey }),
 };
+
+// Build dynamic type description from registry
+const typeRegistry = getTypeRegistry();
+const typeList = Object.entries(typeRegistry)
+  .map(([t, d]) => `${t} (${d})`)
+  .join(', ');
 
 // --- MCP Server ---
 
@@ -64,13 +71,14 @@ server.tool(
   'Save a new memory/note to the knowledge base. Large notes are automatically chunked for embedding. Use upsert_key in metadata to update an existing note instead of creating a duplicate.',
   {
     content: z.string().describe('The note content to save'),
-    type: z.enum(['user-preference', 'feedback', 'architecture-decision', 'project-status', 'reference', 'event', 'error', 'knowledge-guide', 'general']).describe('Note type for consistent categorization'),
+    type: z.string().describe(`Note type. Registered: ${typeList}. Unknown types will prompt for registration.`),
     agent: z.string().describe('Which agent is saving this note (e.g. claude-code, zhuli)'),
     metadata: z.record(z.string(), z.unknown()).default({}).describe('Optional metadata (project, local_file, upsert_key, etc.)'),
     force: z.boolean().default(false).describe('Skip duplicate check and force creation of a new note'),
+    register_type: z.boolean().default(false).describe('Set to true to register an unknown type before saving. Pass delivery in metadata if not using default (knowledge).'),
   },
-  async ({ content, type, agent, metadata, force }) => {
-    const result = await opAddNote(clients, content, type, agent, metadata, force);
+  async ({ content, type, agent, metadata, force, register_type }) => {
+    const result = await opAddNote(clients, content, type, agent, metadata, force, register_type);
     return { content: [{ type: 'text' as const, text: result.message }] };
   }
 );

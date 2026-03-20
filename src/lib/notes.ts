@@ -587,6 +587,7 @@ export async function opAddNote(
   agent: string,
   metadata: Record<string, unknown>,
   force: boolean,
+  registerTypeFlag?: boolean,
 ): Promise<OperationResult> {
   const upsertKey = metadata.upsert_key as string | undefined;
   const description = metadata.description as string | undefined;
@@ -603,6 +604,33 @@ export async function opAddNote(
 
   // Clean up the skip flag before saving
   delete metadata.interactive_skip;
+
+  // --- Type resolution and registration ---
+  const resolvedType = resolveTypeAlias(type);
+
+  // If register_type flag is set and type is unknown, register it
+  if (registerTypeFlag && !isRegisteredType(resolvedType)) {
+    const nameError = validateTypeName(resolvedType);
+    if (nameError) return { status: 'error', message: nameError };
+
+    const delivery = (metadata.delivery as DeliveryTier) || 'knowledge';
+    registerType(resolvedType, delivery);
+  }
+
+  // If type is still unknown after potential registration, prompt
+  if (!isRegisteredType(resolvedType)) {
+    const registry = getTypeRegistry();
+    const typeListStr = Object.entries(registry)
+      .map(([t, d]) => `${t} (${d})`)
+      .join(', ');
+    return {
+      status: 'confirm',
+      message: `Type "${type}" is not registered.\n\nOptions:\n1. Register with delivery "knowledge" (default) — re-call add_note with register_type: true\n2. Register with specific delivery — re-call add_note with register_type: true AND set metadata.delivery to "persona", "project", or "knowledge"\n3. Use an existing type instead — re-call add_note with one of: ${typeListStr}\n4. Cancel\n\nAsk the user which option they prefer.`,
+    };
+  }
+
+  // Use resolved type for the rest of the flow
+  type = resolvedType;
 
   // Naming enforcement (opt-in via config)
   if (isNamingEnforced()) {

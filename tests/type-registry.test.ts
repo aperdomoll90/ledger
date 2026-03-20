@@ -80,6 +80,20 @@ describe('isRegisteredType', () => {
   });
 });
 
+describe('unknown type flow (unit)', () => {
+  it('isRegisteredType returns false for unregistered custom types', () => {
+    expect(isRegisteredType('wine-log')).toBe(false);
+  });
+
+  it('validateTypeName accepts the type name that would be registered', () => {
+    expect(validateTypeName('wine-log')).toBeNull();
+  });
+
+  it('validateTypeName rejects invalid names before registration', () => {
+    expect(validateTypeName('Wine_Log')).not.toBeNull();
+  });
+});
+
 describe('validateTypeName', () => {
   it('accepts valid type names', () => {
     expect(validateTypeName('wine-log')).toBeNull();
