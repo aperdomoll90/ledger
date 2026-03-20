@@ -1,6 +1,6 @@
 import type { LedgerConfig } from '../lib/config.js';
 import { loadConfigFile } from '../lib/config.js';
-import { opAddNote, NOTE_TYPES, NOTE_STATUSES, type NoteStatus } from '../lib/notes.js';
+import { opAddNote, getRegisteredTypes, isRegisteredType, registerType, validateTypeName, inferDelivery, NOTE_STATUSES, type NoteStatus, type DeliveryTier } from '../lib/notes.js';
 import { ask, confirm, choose } from '../lib/prompt.js';
 
 export async function add(
@@ -22,11 +22,37 @@ export async function add(
   if (interactive && !options.force) {
     // Type
     if (!type) {
+      const registeredTypes = getRegisteredTypes();
       const typeChoice = await choose('What type of note is this?', [
-        ...NOTE_TYPES,
+        ...registeredTypes,
         'skip — use default (general)',
       ]);
       type = typeChoice.startsWith('skip') ? 'general' : typeChoice;
+    }
+
+    // Handle unknown type from --type flag
+    if (type && !isRegisteredType(type)) {
+      console.error(`\nType "${type}" is not registered.`);
+      const action = await choose('What would you like to do?', [
+        'register — register it now (pick a delivery tier)',
+        'existing — use an existing type instead',
+        'proceed — save anyway (defaults to "knowledge" delivery)',
+      ]);
+
+      if (action.startsWith('register')) {
+        const nameError = validateTypeName(type);
+        if (nameError) {
+          console.error(nameError);
+          process.exit(1);
+        }
+        const deliveryChoice = await choose('Delivery tier?', ['persona', 'project', 'knowledge']);
+        registerType(type, deliveryChoice as DeliveryTier);
+        console.error(`Registered type "${type}" with delivery "${deliveryChoice}".`);
+      } else if (action.startsWith('existing')) {
+        const registeredTypes = getRegisteredTypes();
+        type = await choose('Choose a type:', registeredTypes);
+      }
+      // 'proceed' — use the type as-is, will default to knowledge delivery
     }
 
     // Description
@@ -48,8 +74,7 @@ export async function add(
     }
 
     // Status (only for project-scoped types)
-    const projectTypes = ['architecture-decision', 'project-status', 'event', 'error'];
-    if (projectTypes.includes(type) && !metadata.status) {
+    if (inferDelivery(type) === 'project' && !metadata.status) {
       const statusChoice = await choose('What stage is this?', [
         ...NOTE_STATUSES,
         'skip — no status',
