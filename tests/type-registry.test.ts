@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BUILTIN_TYPES, getTypeRegistry, inferDelivery, getRegisteredTypes, isRegisteredType, validateTypeName } from '../src/lib/notes.js';
+import type { DeliveryTier } from '../src/lib/notes.js';
 
 describe('BUILTIN_TYPES', () => {
   it('contains all 11 built-in types', () => {
@@ -124,5 +125,28 @@ describe('validateTypeName', () => {
 
   it('rejects empty string', () => {
     expect(validateTypeName('')).not.toBeNull();
+  });
+});
+
+describe('type registry sync merge', () => {
+  it('union merges non-conflicting types', () => {
+    const local: Record<string, DeliveryTier> = { 'wine-log': 'project' };
+    const remote: Record<string, DeliveryTier> = { 'recipe': 'knowledge' };
+    const merged = { ...remote, ...local };
+    expect(merged).toEqual({ 'wine-log': 'project', 'recipe': 'knowledge' });
+  });
+
+  it('local wins on conflict', () => {
+    const local: Record<string, DeliveryTier> = { 'wine-log': 'project' };
+    const remote: Record<string, DeliveryTier> = { 'wine-log': 'persona' };
+    const merged = { ...remote, ...local };
+    expect(merged['wine-log']).toBe('project');
+  });
+
+  it('adds remote-only types', () => {
+    const local: Record<string, DeliveryTier> = {};
+    const remote: Record<string, DeliveryTier> = { 'recipe': 'knowledge' };
+    const merged = { ...remote, ...local };
+    expect(merged['recipe']).toBe('knowledge');
   });
 });

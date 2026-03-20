@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync, unlinkSync, readdirSync } from 'fs';
 import { resolve } from 'path';
-import type { LedgerConfig } from '../lib/config.js';
-import { fetchPersonaNotes, updateNoteContent, updateNoteHash, type NoteRow } from '../lib/notes.js';
+import { loadConfigFile, saveConfigFile, type LedgerConfig } from '../lib/config.js';
+import { fetchPersonaNotes, updateNoteContent, updateNoteHash, opAddNote, type NoteRow, type Clients, type DeliveryTier } from '../lib/notes.js';
 import { contentHash } from '../lib/hash.js';
 import { generateClaudeMd, generateMemoryMd } from '../lib/generators.js';
 import { confirm } from '../lib/prompt.js';
@@ -38,6 +38,9 @@ export async function sync(config: LedgerConfig, options: SyncOptions): Promise<
   }
 
   mkdirSync(config.memoryDir, { recursive: true });
+
+  // --- Phase 0: Sync type registry ---
+  await syncTypeRegistryPull(config, quiet, force, dryRun);
 
   const notesByFile = new Map<string, NoteRow>();
   for (const note of notes) {
@@ -214,6 +217,9 @@ export async function sync(config: LedgerConfig, options: SyncOptions): Promise<
     }
   }
 
+  // --- Phase 3.5: Push type registry ---
+  await syncTypeRegistryPush(config, quiet, dryRun);
+
   // --- Summary ---
   if (!quiet) {
     const parts = [
@@ -228,4 +234,80 @@ export async function sync(config: LedgerConfig, options: SyncOptions): Promise<
   }
 
   return result;
+}
+
+export async function syncTypeRegistryPush(config: LedgerConfig, quiet: boolean, dryRun: boolean): Promise<void> {
+  const configFile = loadConfigFile();
+  const userTypes = configFile.types;
+
+  if (!userTypes || Object.keys(userTypes).length === 0) {
+    return; // Nothing to push
+  }
+
+  const content = JSON.stringify(userTypes, null, 2);
+  const clients: Clients = { supabase: config.supabase, openai: config.openai };
+
+  if (dryRun) {
+    if (!quiet) console.error('  type-registry — would push to Ledger');
+    return;
+  }
+
+  await opAddNote(clients, content, 'system-rule', 'ledger-sync', {
+    upsert_key: 'system-rule-type-registry',
+    description: 'User-defined type registry overrides. Managed by ledger sync.',
+    delivery: 'persona',
+    scope: 'system',
+    interactive_skip: true,
+  }, true); // force: true to skip duplicate guard
+
+  if (!quiet) console.error('  type-registry — pushed to Ledger');
+}
+
+export async function syncTypeRegistryPull(config: LedgerConfig, quiet: boolean, force: boolean, dryRun: boolean): Promise<void> {
+  const { data: note } = await config.supabase
+    .from('notes')
+    .select('content')
+    .eq('metadata->>upsert_key', 'system-rule-type-registry')
+    .limit(1)
+    .single();
+
+  if (!note) return; // No remote type registry
+
+  let remoteTypes: Record<string, DeliveryTier>;
+  try {
+    remoteTypes = JSON.parse(note.content);
+  } catch {
+    if (!quiet) console.error('  type-registry — invalid JSON in remote note, skipping');
+    return;
+  }
+
+  const configFile = loadConfigFile();
+  const localTypes = configFile.types ?? {};
+
+  // Merge: local wins unless --force
+  const merged = force
+    ? { ...localTypes, ...remoteTypes }
+    : { ...remoteTypes, ...localTypes };
+
+  // Check if anything changed
+  const localJson = JSON.stringify(localTypes, Object.keys(localTypes).sort());
+  const mergedJson = JSON.stringify(merged, Object.keys(merged).sort());
+
+  if (localJson === mergedJson) return; // No changes
+
+  if (dryRun) {
+    const newKeys = Object.keys(merged).filter(k => !(k in localTypes));
+    if (newKeys.length > 0 && !quiet) {
+      console.error(`  type-registry — would add: ${newKeys.map(k => `${k} (${merged[k]})`).join(', ')}`);
+    }
+    return;
+  }
+
+  configFile.types = merged;
+  saveConfigFile(configFile);
+
+  const newKeys = Object.keys(merged).filter(k => !(k in localTypes));
+  if (newKeys.length > 0 && !quiet) {
+    console.error(`  type-registry synced: added ${newKeys.map(k => `${k} (${merged[k]})`).join(', ')}`);
+  }
 }
