@@ -1,32 +1,9 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { getLedgerDir, type HookConfig, type NamingConfig, saveConfigFile, loadConfigFile } from '../lib/config.js';
+import { BUILTIN_TYPES, getTypeRegistry, opUpdateMetadata, validateTypeName, type DeliveryTier, type Clients } from '../lib/notes.js';
+import { choose, confirm } from '../lib/prompt.js';
 import { resolve } from 'path';
-import { getLedgerDir, type HookConfig, type NamingConfig } from '../lib/config.js';
-import { confirm } from '../lib/prompt.js';
 
 const CONFIG_PATH = resolve(getLedgerDir(), 'config.json');
-
-interface FullConfig {
-  memoryDir?: string;
-  claudeMdPath?: string;
-  hooks?: Partial<HookConfig>;
-  naming?: Partial<NamingConfig>;
-  device?: { alias: string };
-}
-
-function loadFullConfig(): FullConfig {
-  if (existsSync(CONFIG_PATH)) {
-    try {
-      return JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
-
-function saveConfig(config: FullConfig): void {
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
-}
 
 const SECURITY_WARNINGS: Record<string, string> = {
   envBlocking: 'This disables .env file protection.\nYour API keys and credentials will be readable by the AI agent.',
@@ -50,7 +27,7 @@ const DEVICE_DESCRIPTIONS: Record<string, string> = {
 };
 
 export async function configGet(key: string): Promise<void> {
-  const config = loadFullConfig();
+  const config = loadConfigFile();
 
   if (key === 'all') {
     console.log(JSON.stringify(config, null, 2));
@@ -99,14 +76,46 @@ export async function configGet(key: string): Promise<void> {
     return;
   }
 
-  const allKeys = [...Object.keys(DESCRIPTIONS), ...Object.keys(NAMING_DESCRIPTIONS), ...Object.keys(DEVICE_DESCRIPTIONS), 'memoryDir', 'claudeMdPath', 'all'];
+  // Handle type registry
+  if (key === 'types') {
+    const registry = getTypeRegistry();
+    const userTypes = config.types ?? {};
+
+    console.error('Type registry:');
+    for (const [typeName, delivery] of Object.entries(registry)) {
+      const isBuiltin = typeName in BUILTIN_TYPES;
+      const isOverridden = isBuiltin && typeName in userTypes;
+      const isCustom = !isBuiltin;
+
+      let annotation = isCustom ? '(custom)' : '(built-in)';
+      if (isOverridden) {
+        annotation = `(built-in, overridden — default: ${BUILTIN_TYPES[typeName]})`;
+      }
+      console.error(`  ${typeName}: ${delivery} ${annotation}`);
+    }
+    return;
+  }
+
+  if (key.startsWith('types.')) {
+    const typeName = key.slice(6);
+    const registry = getTypeRegistry();
+    if (typeName in registry) {
+      const isBuiltin = typeName in BUILTIN_TYPES;
+      console.log(`${typeName}: ${registry[typeName]} (${isBuiltin ? 'built-in' : 'custom'})`);
+    } else {
+      console.log(`${typeName}: not registered`);
+    }
+    return;
+  }
+
+  const allKeys = [...Object.keys(DESCRIPTIONS), ...Object.keys(NAMING_DESCRIPTIONS), ...Object.keys(DEVICE_DESCRIPTIONS), 'memoryDir', 'claudeMdPath', 'types', 'all'];
   console.error(`Unknown config key: ${key}`);
   console.error(`Available: ${allKeys.join(', ')}`);
   process.exit(1);
 }
 
-export async function configSet(key: string, value: string): Promise<void> {
-  const config = loadFullConfig();
+export async function configSet(key: string, value: string, clients?: Clients): Promise<void> {
+  const config = loadConfigFile();
 
   // Handle hook settings
   const hookKeys = ['envBlocking', 'mcpJsonBlocking', 'writeInterception', 'sessionEndCheck'];
@@ -131,7 +140,7 @@ export async function configSet(key: string, value: string): Promise<void> {
 
     if (!config.hooks) config.hooks = {};
     config.hooks[key as keyof HookConfig] = boolValue;
-    saveConfig(config);
+    saveConfigFile(config);
 
     const state = boolValue ? 'enabled' : 'disabled';
     console.error(`${key}: ${state}`);
@@ -146,7 +155,7 @@ export async function configSet(key: string, value: string): Promise<void> {
     if (!config.naming) config.naming = {};
     const field = key.split('.')[1] as keyof NamingConfig;
     config.naming[field] = boolValue;
-    saveConfig(config);
+    saveConfigFile(config);
     console.error(`${key}: ${boolValue ? 'enabled' : 'disabled'}`);
     return;
   }
@@ -154,7 +163,7 @@ export async function configSet(key: string, value: string): Promise<void> {
   // Handle device alias
   if (key === 'device.alias') {
     config.device = { alias: value };
-    saveConfig(config);
+    saveConfigFile(config);
     console.error(`device.alias: ${value}`);
     return;
   }
@@ -162,19 +171,137 @@ export async function configSet(key: string, value: string): Promise<void> {
   // Handle path settings
   if (key === 'memoryDir' || key === 'claudeMdPath') {
     (config as Record<string, unknown>)[key] = value;
-    saveConfig(config);
+    saveConfigFile(config);
     console.error(`${key}: ${value}`);
     return;
   }
 
-  const allKeys = [...hookKeys, ...namingKeys, 'device.alias', 'memoryDir', 'claudeMdPath'];
+  // Handle type registry
+  if (key.startsWith('types.')) {
+    const typeName = key.slice(6);
+    const delivery = value as DeliveryTier;
+
+    if (!['persona', 'project', 'knowledge'].includes(delivery)) {
+      console.error(`Invalid delivery tier: "${value}". Must be: persona, project, or knowledge.`);
+      process.exit(1);
+    }
+
+    const nameError = validateTypeName(typeName);
+    if (nameError) {
+      console.error(nameError);
+      process.exit(1);
+    }
+
+    const oldDelivery = config.types?.[typeName] ?? BUILTIN_TYPES[typeName];
+    if (!config.types) config.types = {};
+    config.types[typeName] = delivery;
+    saveConfigFile(config);
+
+    const isBuiltin = typeName in BUILTIN_TYPES;
+    const action = isBuiltin ? 'overridden' : 'registered';
+    console.error(`types.${typeName}: ${delivery} (${action})`);
+
+    // Delivery change propagation — only if we have DB access and delivery actually changed
+    if (clients && oldDelivery && oldDelivery !== delivery) {
+      const { data: notes } = await clients.supabase
+        .from('notes')
+        .select('id, metadata')
+        .eq('metadata->>type', typeName);
+
+      const affected = (notes ?? []).filter(
+        (n: { id: number; metadata: Record<string, unknown> }) =>
+          (n.metadata.delivery as string) !== delivery
+      );
+
+      if (affected.length > 0) {
+        console.error(`\n${affected.length} note(s) currently have a different delivery:`);
+        for (const note of affected) {
+          const meta = note.metadata as Record<string, unknown>;
+          const uKey = (meta.upsert_key as string) || `id-${note.id}`;
+          console.error(`  [${note.id}] ${uKey} — delivery: ${meta.delivery}`);
+        }
+
+        const action = await choose('\nUpdate delivery on these notes?', [
+          'all — update all notes',
+          'select — choose individually',
+          'none — only affect new notes',
+        ]);
+
+        if (action.startsWith('all')) {
+          for (const note of affected) {
+            await opUpdateMetadata(clients, note.id, { delivery });
+          }
+          console.error(`Updated delivery to "${delivery}" on ${affected.length} note(s).`);
+        } else if (action.startsWith('select')) {
+          let updated = 0;
+          for (const note of affected) {
+            const meta = note.metadata as Record<string, unknown>;
+            const uKey = (meta.upsert_key as string) || `id-${note.id}`;
+            const yes = await confirm(`  Update [${note.id}] ${uKey}?`);
+            if (yes) {
+              await opUpdateMetadata(clients, note.id, { delivery });
+              updated++;
+            }
+          }
+          console.error(`Updated delivery on ${updated} note(s).`);
+        }
+      }
+    }
+    return;
+  }
+
+  const allKeys = [...hookKeys, ...namingKeys, 'device.alias', 'memoryDir', 'claudeMdPath', 'types.*'];
   console.error(`Unknown config key: ${key}`);
   console.error(`Available: ${allKeys.join(', ')}`);
   process.exit(1);
 }
 
+export async function configUnset(key: string, clients?: Clients): Promise<void> {
+  if (!key.startsWith('types.')) {
+    console.error(`Unset is only supported for types.* keys. Got: ${key}`);
+    process.exit(1);
+  }
+
+  const typeName = key.slice(6);
+  const config = loadConfigFile();
+  const userTypes = config.types ?? {};
+
+  if (!(typeName in userTypes)) {
+    console.error(`No user override for "${typeName}".`);
+    return;
+  }
+
+  const isBuiltin = typeName in BUILTIN_TYPES;
+
+  if (!isBuiltin && clients) {
+    const { data: notes } = await clients.supabase
+      .from('notes')
+      .select('id')
+      .eq('metadata->>type', typeName);
+
+    if (notes && notes.length > 0) {
+      console.error(`\n${notes.length} note(s) use type "${typeName}". They will become unregistered (delivery defaults to "knowledge").`);
+      const proceed = await confirm('Proceed?');
+      if (!proceed) {
+        console.error('Cancelled.');
+        return;
+      }
+    }
+  }
+
+  delete config.types![typeName];
+  if (config.types && Object.keys(config.types).length === 0) delete config.types;
+  saveConfigFile(config);
+
+  if (isBuiltin) {
+    console.error(`Reverted "${typeName}" to built-in default: ${BUILTIN_TYPES[typeName]}`);
+  } else {
+    console.error(`Removed custom type "${typeName}".`);
+  }
+}
+
 export async function configList(): Promise<void> {
-  const config = loadFullConfig();
+  const config = loadConfigFile();
   const hooks = config.hooks || {};
 
   console.error('Hook settings:');
@@ -199,6 +326,23 @@ export async function configList(): Promise<void> {
   console.error('\nPaths:');
   console.error(`  memoryDir: ${config.memoryDir || '(default)'}`);
   console.error(`  claudeMdPath: ${config.claudeMdPath || '(default)'}`);
+
+  const registry = getTypeRegistry();
+  const userTypes = config.types ?? {};
+  const customTypes = Object.keys(userTypes).filter(t => !(t in BUILTIN_TYPES));
+  const overrides = Object.keys(userTypes).filter(t => t in BUILTIN_TYPES);
+
+  console.error('\nType registry:');
+  if (customTypes.length > 0) {
+    console.error(`  Custom types: ${customTypes.map(t => `${t} (${userTypes[t]})`).join(', ')}`);
+  }
+  if (overrides.length > 0) {
+    console.error(`  Overrides: ${overrides.map(t => `${t}: ${userTypes[t]} (default: ${BUILTIN_TYPES[t]})`).join(', ')}`);
+  }
+  if (customTypes.length === 0 && overrides.length === 0) {
+    console.error('  No custom types or overrides. Using built-in defaults.');
+  }
+  console.error(`  Built-in types: ${Object.keys(BUILTIN_TYPES).length}`);
 
   console.error('\nConfig file: ' + CONFIG_PATH);
 }

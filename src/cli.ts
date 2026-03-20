@@ -19,7 +19,7 @@ import { setupClaudeCode, setupOpenclaw, setupChatgpt } from './commands/setup.j
 import { backup, enableBackupCron, disableBackupCron } from './commands/backup.js';
 import { restore } from './commands/restore.js';
 import { onboard } from './commands/onboard.js';
-import { configGet, configSet, configList } from './commands/config.js';
+import { configGet, configSet, configUnset, configList } from './commands/config.js';
 import { migrate } from './commands/migrate.js';
 import { add } from './commands/add.js';
 import { update } from './commands/update.js';
@@ -150,7 +150,24 @@ configCmd
   .command('set <key> <value>')
   .description('Set a config value')
   .action(async (key: string, value: string) => {
-    await configSet(key, value);
+    if (key.startsWith('types.')) {
+      const config = loadConfig();
+      await configSet(key, value, { supabase: config.supabase, openai: config.openai });
+    } else {
+      await configSet(key, value);
+    }
+  });
+
+configCmd
+  .command('unset <key>')
+  .description('Remove a config override (types.* keys only)')
+  .action(async (key: string) => {
+    if (key.startsWith('types.')) {
+      const config = loadConfig();
+      await configUnset(key, { supabase: config.supabase, openai: config.openai });
+    } else {
+      await configUnset(key);
+    }
   });
 
 configCmd
