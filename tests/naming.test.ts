@@ -74,7 +74,7 @@ describe('validateNaming', () => {
 
   it('accepts unknown types without prefix validation', () => {
     // Types not in TYPE_PREFIXES skip prefix check
-    expect(validateNaming('custom-something', 'knowledge-guide', 'A guide')).toBeNull();
+    expect(validateNaming('custom-something', 'unknown-custom-type', 'A guide')).toBeNull();
   });
 
   it('rejects special characters', () => {

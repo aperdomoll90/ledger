@@ -331,12 +331,16 @@ function formatNotePreview(
 const TYPE_PREFIXES: Record<string, string[]> = {
   'feedback': ['feedback'],
   'user-preference': ['user'],
+  'persona-rule': ['persona-rule'],
+  'system-rule': ['system-rule'],
+  'code-craft': ['code-craft'],
   'architecture-decision': ['spec', 'architecture'],
   'project-status': ['project-status'],
   'reference': ['reference'],
   'event': ['devlog', 'event'],
   'error': ['errorlog', 'error'],
   'general': ['general'],
+  'knowledge-guide': ['knowledge-guide'],
 };
 
 /**
