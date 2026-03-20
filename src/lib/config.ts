@@ -43,6 +43,7 @@ export interface ConfigFile {
   hooks?: Partial<HookConfig>;
   naming?: Partial<NamingConfig>;
   device?: { alias: string };
+  types?: Record<string, 'persona' | 'project' | 'knowledge'>;
 }
 
 // --- Helpers ---

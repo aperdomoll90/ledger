@@ -3,7 +3,7 @@ import type OpenAI from 'openai';
 import { randomUUID, createHash } from 'crypto';
 import { fatal, ExitCode } from './errors.js';
 import { contentHash } from './hash.js';
-import { loadConfigFile } from './config.js';
+import { loadConfigFile, saveConfigFile } from './config.js';
 
 // --- Types ---
 
@@ -48,19 +48,67 @@ export interface SearchResult extends NoteRow {
 
 export type DeliveryTier = 'persona' | 'project' | 'knowledge';
 
-const DELIVERY_BY_TYPE: Record<string, DeliveryTier> = {
+// --- Built-in Type Registry ---
+
+export const BUILTIN_TYPES: Record<string, DeliveryTier> = {
   'user-preference': 'persona',
-  'feedback': 'persona',
+  'persona-rule': 'persona',
+  'system-rule': 'persona',
+  'code-craft': 'persona',
   'architecture-decision': 'project',
   'project-status': 'project',
-  'error': 'project',
   'event': 'project',
+  'error': 'project',
   'reference': 'knowledge',
+  'knowledge-guide': 'knowledge',
   'general': 'knowledge',
 };
 
+const TYPE_ALIASES: Record<string, string> = {
+  'feedback': 'general',
+};
+
+function resolveTypeAlias(type: string): string {
+  return TYPE_ALIASES[type] ?? type;
+}
+
+export function getTypeRegistry(): Record<string, DeliveryTier> {
+  const config = loadConfigFile();
+  return { ...BUILTIN_TYPES, ...(config.types ?? {}) };
+}
+
 export function inferDelivery(noteType: string): DeliveryTier {
-  return DELIVERY_BY_TYPE[noteType] ?? 'knowledge';
+  const resolved = resolveTypeAlias(noteType);
+  return getTypeRegistry()[resolved] ?? 'knowledge';
+}
+
+export function getRegisteredTypes(): string[] {
+  return Object.keys(getTypeRegistry());
+}
+
+export function isRegisteredType(noteType: string): boolean {
+  const resolved = resolveTypeAlias(noteType);
+  return resolved in getTypeRegistry();
+}
+
+export function registerType(name: string, delivery: DeliveryTier): void {
+  const config = loadConfigFile();
+  if (!config.types) config.types = {};
+  config.types[name] = delivery;
+  saveConfigFile(config);
+}
+
+export function validateTypeName(name: string): string | null {
+  if (!name || name.length < 2) {
+    return `Type name must be at least 2 characters. Got ${name.length}.`;
+  }
+  if (name.length > 50) {
+    return `Type name must be 50 characters or fewer. Got ${name.length}.`;
+  }
+  if (!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/.test(name)) {
+    return `Invalid type name "${name}". Use lowercase alphanumeric + hyphens, starting with a letter (e.g., "wine-log").`;
+  }
+  return null;
 }
 
 // --- Queries ---
@@ -355,18 +403,8 @@ function isInteractive(): boolean {
   return config.naming?.interactive !== false;
 }
 
-/** Valid note types for the interactive prompt. */
-export const NOTE_TYPES = [
-  'user-preference',
-  'feedback',
-  'architecture-decision',
-  'project-status',
-  'reference',
-  'event',
-  'error',
-  'knowledge-guide',
-  'general',
-] as const;
+/** @deprecated Use getRegisteredTypes() instead */
+export const NOTE_TYPES = Object.keys(BUILTIN_TYPES);
 
 /** Valid statuses for notes. */
 export const NOTE_STATUSES: NoteStatus[] = ['idea', 'planning', 'active', 'done'];
@@ -390,8 +428,7 @@ export function checkMetadataCompleteness(
   }
 
   // Only ask for status on project-scoped types
-  const projectTypes = ['architecture-decision', 'project-status', 'event', 'error'];
-  if (projectTypes.includes(type) && !metadata.status) {
+  if (inferDelivery(type) === 'project' && !metadata.status) {
     missing.push('status');
   }
 
