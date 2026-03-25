@@ -134,7 +134,6 @@ export async function findNoteByFile(
     .from('notes')
     .select('id, metadata')
     .eq('metadata->>local_file', filename)
-    .limit(1)
     .single();
 
   if (byFile) return byFile;
@@ -144,7 +143,6 @@ export async function findNoteByFile(
     .from('notes')
     .select('id, metadata')
     .eq('metadata->>upsert_key', upsertKey)
-    .limit(1)
     .single();
 
   return byKey || null;
@@ -683,7 +681,6 @@ export async function opAddNote(
       .from('notes')
       .select('id, metadata, created_at')
       .eq('metadata->>upsert_key', upsertKey)
-      .limit(1)
       .single();
 
     if (existing) {
