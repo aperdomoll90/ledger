@@ -990,3 +990,36 @@ export async function opDeleteNote(
   if (error) return { status: 'error', message: `Error: ${error.message}` };
   return { status: 'ok', message: `Note ${id} deleted.` };
 }
+
+export async function checkChunkIntegrity(
+  supabase: SupabaseClient,
+): Promise<{ incompleteGroups: Array<{ groupId: string; expected: number; found: number }> }> {
+  const { data: chunkedNotes, error } = await supabase
+    .from('notes')
+    .select('id, metadata')
+    .not('metadata->>chunk_group', 'is', null);
+
+  if (error || !chunkedNotes) return { incompleteGroups: [] };
+
+  const groups = new Map<string, Array<{ id: number; index: number; total: number }>>();
+  for (const note of chunkedNotes) {
+    const meta = note.metadata as Record<string, unknown>;
+    const groupId = meta.chunk_group as string;
+    if (!groups.has(groupId)) groups.set(groupId, []);
+    groups.get(groupId)!.push({
+      id: note.id,
+      index: meta.chunk_index as number,
+      total: meta.total_chunks as number,
+    });
+  }
+
+  const incompleteGroups: Array<{ groupId: string; expected: number; found: number }> = [];
+  for (const [groupId, chunks] of groups) {
+    const expected = chunks[0].total;
+    if (chunks.length !== expected) {
+      incompleteGroups.push({ groupId, expected, found: chunks.length });
+    }
+  }
+
+  return { incompleteGroups };
+}

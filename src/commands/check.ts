@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { fetchNoteHashes } from '../lib/notes.js';
+import { fetchNoteHashes, checkChunkIntegrity } from '../lib/notes.js';
 import { contentHash } from '../lib/hash.js';
 
 export type FileState = 'clean' | 'modified' | 'upstream' | 'conflict' | 'unknown' | 'deleted';
@@ -108,4 +108,19 @@ export async function check(config: LedgerConfig): Promise<CheckResult> {
   }
 
   return result;
+}
+
+export async function checkChunks(config: LedgerConfig): Promise<void> {
+  console.error('Checking chunk integrity...');
+  const result = await checkChunkIntegrity(config.supabase);
+
+  if (result.incompleteGroups.length === 0) {
+    console.log('All chunk groups are complete.');
+    return;
+  }
+
+  console.error(`Found ${result.incompleteGroups.length} incomplete chunk group(s):`);
+  for (const group of result.incompleteGroups) {
+    console.error(`  group ${group.groupId}: expected ${group.expected} chunks, found ${group.found}`);
+  }
 }

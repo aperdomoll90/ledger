@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
 import { pull } from './commands/pull.js';
 import { push } from './commands/push.js';
-import { check } from './commands/check.js';
+import { check, checkChunks } from './commands/check.js';
 import { sync } from './commands/sync.js';
 import { show } from './commands/show.js';
 import { exportNote } from './commands/export.js';
@@ -60,10 +60,15 @@ program
 
 program
   .command('check')
-  .description('Compare local files vs Ledger, report sync status (alias for sync --dry-run)')
-  .action(async () => {
+  .description('Compare local files vs Ledger, report sync status')
+  .option('--chunks', 'Check chunk group integrity')
+  .action(async (opts: { chunks?: boolean }) => {
     const config = loadConfig();
-    await check(config);
+    if (opts.chunks) {
+      await checkChunks(config);
+    } else {
+      await check(config);
+    }
   });
 
 program
