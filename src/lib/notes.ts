@@ -18,7 +18,7 @@ export interface NoteMetadata {
   local_file?: string;
   content_hash?: string;
   description?: string;
-  delivery?: 'persona' | 'project' | 'knowledge';
+  delivery?: 'persona' | 'project' | 'knowledge' | 'protected';
   chunk_group?: string;
   chunk_index?: number;
   total_chunks?: number;
@@ -46,7 +46,7 @@ export interface SearchResult extends NoteRow {
 
 // --- Delivery ---
 
-export type DeliveryTier = 'persona' | 'project' | 'knowledge';
+export type DeliveryTier = 'persona' | 'project' | 'knowledge' | 'protected';
 
 // --- Built-in Type Registry ---
 
@@ -813,6 +813,17 @@ export async function opUpdateNote(
     return { status: 'error', message: `Error: note ${id} not found.` };
   }
 
+  // Protected delivery gate — skill-reference and other protected notes require explicit confirmation
+  const existingDelivery = (existing.metadata as Record<string, unknown>).delivery;
+  if (existingDelivery === 'protected' && !confirmed) {
+    const existingType = (existing.metadata as Record<string, unknown>).type as string | undefined;
+    const uKey = (existing.metadata as Record<string, unknown>).upsert_key as string | undefined;
+    return {
+      status: 'confirm',
+      message: `⚠️ PROTECTED NOTE — "${uKey || `id ${id}`}" (type: ${existingType || 'unknown'}) has protected delivery.\n\nThis is a skill-reference note. Are you sure you want to update it? Skill reference documents are protected to prevent accidental overwrites.\n\nTo proceed, call update_note again with confirmed: true.`,
+    };
+  }
+
   // Confirmation gate
   if (!confirmed) {
     const currentPreview = formatNotePreview(existing.id, existing.metadata, existing.content);
@@ -896,6 +907,7 @@ export async function opUpdateMetadata(
   clients: Clients,
   id: number,
   metadata: Record<string, unknown>,
+  confirmed = false,
 ): Promise<OperationResult> {
   const { data: existing, error: fetchError } = await clients.supabase
     .from('notes')
@@ -905,6 +917,17 @@ export async function opUpdateMetadata(
 
   if (fetchError || !existing) {
     return { status: 'error', message: `Error: note ${id} not found.` };
+  }
+
+  // Protected delivery gate
+  const existingDelivery = (existing.metadata as Record<string, unknown>).delivery;
+  if (existingDelivery === 'protected' && !confirmed) {
+    const existingType = (existing.metadata as Record<string, unknown>).type as string | undefined;
+    const uKey = (existing.metadata as Record<string, unknown>).upsert_key as string | undefined;
+    return {
+      status: 'confirm',
+      message: `⚠️ PROTECTED NOTE — "${uKey || `id ${id}`}" (type: ${existingType || 'unknown'}) has protected delivery.\n\nThis is a skill-reference note. Are you sure you want to update its metadata?\n\nTo proceed, call update_metadata again with confirmed: true.`,
+    };
   }
 
   const merged = { ...existing.metadata as Record<string, unknown>, ...metadata };
@@ -936,6 +959,16 @@ export async function opDeleteNote(
 
   const meta = existing.metadata as Record<string, unknown>;
   const groupId = meta.chunk_group as string | undefined;
+
+  // Protected delivery gate
+  if (meta.delivery === 'protected' && !confirmed) {
+    const uKey = meta.upsert_key as string | undefined;
+    const existingType = meta.type as string | undefined;
+    return {
+      status: 'confirm',
+      message: `⚠️ PROTECTED NOTE — "${uKey || `id ${id}`}" (type: ${existingType || 'unknown'}) has protected delivery.\n\nThis is a skill-reference note. Are you sure you want to delete it? This action cannot be undone.\n\nTo proceed, call delete_note again with confirmed: true.`,
+    };
+  }
 
   // Confirmation gate
   if (!confirmed) {

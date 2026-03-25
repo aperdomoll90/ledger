@@ -45,7 +45,7 @@ export async function add(
           console.error(nameError);
           process.exit(1);
         }
-        const deliveryChoice = await choose('Delivery tier?', ['persona', 'project', 'knowledge']);
+        const deliveryChoice = await choose('Delivery tier?', ['persona', 'project', 'knowledge', 'protected']);
         registerType(type, deliveryChoice as DeliveryTier);
         console.error(`Registered type "${type}" with delivery "${deliveryChoice}".`);
       } else if (action.startsWith('existing')) {

@@ -41,7 +41,7 @@ ledger init    # connect to existing Supabase, pull persona, set up platform
 
 **For you:** Define who you are, how you want AI to behave, your coding conventions, communication style. Do it once. Every AI agent on every device follows the same rules.
 
-**For your agents:** Semantic search over your knowledge base. Notes are embedded with OpenAI and stored in Postgres with pgvector. Agents find relevant context by meaning, not keywords.
+**For your agents:** A full RAG (Retrieval-Augmented Generation) system. Notes are embedded with OpenAI and stored in Postgres with pgvector. Agents find relevant context by semantic meaning, not keywords. Retrieved context is injected into agent prompts automatically via MCP.
 
 **For your workflow:** Automatic sync at session start, conflict detection, session-end checks. Hooks enforce rules (block credential file access, auto-ingest notes to Ledger).
 
@@ -153,10 +153,16 @@ npm run release    # version bump → build → test → publish to npm
 
 ## Roadmap
 
-- Multi-provider embeddings (Supabase built-in, OpenAI, others)
+### RAG Enhancements
+- Hybrid search (vector + BM25 keyword via PostgreSQL full-text search)
+- Re-ranking — score retrieved chunks before feeding to LLM
+- Chunking strategies for large documents (auto-split on ingest)
+- Multi-format ingest (PDF, Excel, images, audio)
+- Multi-provider embeddings (Supabase built-in, OpenAI, Ollama, Cohere)
+
+### Platform
 - Note versioning / history
 - Soft delete (trash)
-- Multi-format ingest (PDF, Excel, images, audio)
 - Web dashboard
 - Skills system (context-aware convention enforcement)
 - VS Code extension

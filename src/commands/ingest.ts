@@ -1,7 +1,7 @@
 import { readFileSync, unlinkSync, readdirSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { fetchPersonaNotes, findNoteByFile, searchNotes, inferDelivery, type NoteRow } from '../lib/notes.js';
+import { fetchPersonaNotes, findNoteByFile, searchNotes, inferDelivery, type NoteRow, type DeliveryTier } from '../lib/notes.js';
 import { contentHash } from '../lib/hash.js';
 import { confirm, choose } from '../lib/prompt.js';
 
@@ -136,9 +136,9 @@ async function ingestFile(config: LedgerConfig, filePath: string, existingNotes:
   const defaultDelivery = inferDelivery(noteType);
   const deliveryChoice = await choose(`Delivery tier (default: ${defaultDelivery}):`, [
     `${defaultDelivery} (default)`,
-    ...(['persona', 'project', 'knowledge'] as const).filter(d => d !== defaultDelivery),
+    ...(['persona', 'project', 'knowledge', 'protected'] as const).filter(d => d !== defaultDelivery),
   ]);
-  const delivery = deliveryChoice.replace(' (default)', '') as 'persona' | 'project' | 'knowledge';
+  const delivery = deliveryChoice.replace(' (default)', '') as DeliveryTier;
 
   const { openai } = config;
   const embeddingResponse = await openai.embeddings.create({

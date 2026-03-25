@@ -181,8 +181,8 @@ export async function configSet(key: string, value: string, clients?: Clients): 
     const typeName = key.slice(6);
     const delivery = value as DeliveryTier;
 
-    if (!['persona', 'project', 'knowledge'].includes(delivery)) {
-      console.error(`Invalid delivery tier: "${value}". Must be: persona, project, or knowledge.`);
+    if (!['persona', 'project', 'knowledge', 'protected'].includes(delivery)) {
+      console.error(`Invalid delivery tier: "${value}". Must be: persona, project, knowledge, or protected.`);
       process.exit(1);
     }
 

@@ -841,3 +841,113 @@ Implement `delivery` field — replace `local_cache: boolean` with semantic deli
 
 ### Status
 Build clean, zero TypeScript errors. `delivery` field fully implemented. Init wizard spec complete and reviewed. Next: implementation plan for wizard.
+
+---
+
+## Session 19 — 2026-03-21 (Art Director Plugin + Protected Delivery Tier)
+
+### Art Director Plugin — New
+Created `~/.claude/plugins/art-director/` — a design critic skill for UI color review.
+
+**Skill architecture:**
+- SKILL.md (940w lean core) — 8-step workflow: gather context → capture → analyze color roles → diagnose tone/mood → check hierarchy → check interaction states → assess image impact → recommend changes
+- tone-vocabulary.md — 9 tones (clinical, premium, cinematic, trustworthy, vibrant, playful, minimal, warm craft, urgent) with context signal mapping
+- hierarchy-rules.md — 6 rules (one accent one job, CTA must win, dominant/supporting separation, dark mode consistency, text hierarchy, tone consistency)
+- anti-patterns.md — 9 named patterns (Rainbow Dashboard, Ghost Button, Concrete Slab, Dark Mode Glow-Up, Shouting Label, Frankenstein, Wallflower Accent, Anxiety Palette, Hover Hijack)
+
+**Design decisions:**
+- Perceived visual weight over pixel counting — saturation, isolation, and position matter more than area
+- Context-aware tone detection — reads design docs, business docs, Ledger notes, token naming before inferring from screenshot
+- Confidence levels (high/medium/low) based on context source quality
+- Component-level two-pass review (isolation check + integration check)
+- Split into lean core + reference files to reduce context load (940w on invoke vs 4,104w monolithic)
+
+**Tested on adrianperdomo.com:**
+- Full review using Chrome DevTools MCP for screenshots and hover states
+- Identified Frankenstein (tonal drift between sections), Wallflower Accent (no clear accent color), Ghost Button (nav links low-contrast)
+- Produced actionable token change recommendations with severity calibration
+
+**Dom integration:**
+- Updated `agents/dom.md` to list `Skill(art-director)` in tools
+
+### Ledger — Protected Delivery Tier
+Added `protected` as a fourth delivery tier alongside persona, project, knowledge.
+
+**Changes:**
+- `DeliveryTier` type updated in notes.ts, config.ts, NoteMetadata interface
+- `opUpdateNote` — protected notes require explicit confirmation with warning message before update
+- `opUpdateMetadata` — now accepts `confirmed` param, gates on protected delivery
+- `opDeleteNote` — protected notes get extra warning before deletion
+- MCP `update_metadata` tool updated to accept `confirmed` parameter
+- CLI validation (config.ts, add.ts, ingest.ts) updated to include `protected` option
+- All 228 tests pass, clean build
+
+**New type registered:**
+- `skill-reference` type with `protected` delivery — for skill backing documents
+- 3 notes saved: art-director-tone-vocabulary (#150), art-director-hierarchy-rules (#151), art-director-anti-patterns (#152)
+
+### Hook Update
+- `block-env.sh` — added path-based exception for `~/.claude/plugins/` to allow SKILL.md and agent template writes
+
+### Project Notes
+- Plugin portability idea saved (note #154) — git repo for custom plugins, revisit when more skills exist
+- User profile updated with Claude Code plugins section
+- Project dashboard updated with Art Director project entry
+
+### Status
+Build clean, 228 tests pass. Art Director plugin complete and tested. Protected delivery tier implemented. Next: more skills, plugin portability repo.
+
+---
+
+## Session 21 — 2026-03-24 (Knowledge Extraction + RAG Reframe)
+
+### Overview
+Bulk knowledge extraction from ~25 video transcripts and screenshots. No code changes — pure knowledge management session. Major reframing of Ledger as a production RAG system.
+
+### Ledger Changes
+- **README.md** — Updated "What It Does" to explicitly call Ledger a RAG system. Roadmap split into RAG Enhancements + Platform sections.
+- **RAG Status Matrix** created in product vision (note 78) — 14 components, 5 done, 9 to build
+- **7-step RAG Implementation Plan** prioritized: hybrid search → chunking → re-ranking → multi-format ingest → multi-provider embeddings → eval/metrics → automated consolidation
+- **Automated consolidation** concept added (Dream-inspired) — merge duplicates, flag contradictions, identify stale notes
+
+### Notes Created (7 new)
+| ID | Type | Content |
+|---|---|---|
+| 177 | knowledge-guide | AI engineering roadmap (Alexi) — 7-step learning path |
+| 178 | knowledge-guide | CSS Patterns & Tricks — masonry, optical button padding, overflow debug |
+| 179 | persona-rule | Always preview note changes before updating (like PR diffs) |
+| 180 | architecture-decision | Chase agent spec — offensive security tester |
+| 181 | code-craft | Skill writing conventions — gotcha sections, progressive disclosure |
+| 182 | code-craft | Hero Layout Patterns — 5 wireframes + CSS Grid skeletons |
+| 184 | code-craft | Clean Code Ch.6 — Objects & Data Structures |
+
+### Notes Updated (20+)
+- **AI Studio (31):** Chase added, ZhuLi→Charlie, deviation logging, multi-model review, self-improvement (autoresearch), skills roadmap (15 tools), dashboard inspiration, context usage report
+- **Charlie spec (32):** Renamed from ZhuLi, platform table
+- **Ross+Ada (35):** WCAG contrast ratios added to Ada
+- **Infrastructure (38):** ZhuLi→Charlie, agent sandboxing
+- **Ledger Dashboard (64):** ZhuLi→Charlie
+- **Ledger Vision (78):** RAG status matrix, 7-step plan, mission updated
+- **User Profile (10):** AI Systems Built section, agency opportunity
+- **Learning Path (12):** RAG reframed as ACTIVE, harness engineering, certification target
+- **Dashboard (118):** Full session 21 work log
+- **Agent Teams Spec (147):** Deviation logging in handoff + pipeline, ZhuLi→Charlie
+- **Color (158):** WCAG contrast ratios
+- **Spacing (160):** White space types
+- **Composition (167):** Logo family
+- **UX Patterns (169):** Fitts's Law
+- **Formatting (170):** Section 02 filled, checklist to 11 items
+- **Clean Code Index (171):** Updated to 6 chapters
+
+### Key Decisions
+- Orchestrator renamed ZhuLi → Charlie (Charles → "in charge") across 6 notes
+- Chase added as 10th agent (offensive security)
+- Ledger recognized as production RAG system — reframed everywhere
+- ~/CLAUDE.md updated with skill writing rules
+- Feedback rule: always show diff before Ledger note updates
+
+### Errors
+None — no code changes this session.
+
+### Status
+No code changes, no build needed. Knowledge base significantly expanded. Immediate next: implement hybrid search (RAG enhancement #1) in Ledger codebase.

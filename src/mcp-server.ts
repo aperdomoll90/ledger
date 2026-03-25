@@ -128,16 +128,17 @@ server.tool(
   }
 );
 
-// Tool: Update metadata only (no content change, no confirmation needed)
+// Tool: Update metadata only (confirmation required for protected notes)
 server.tool(
   'update_metadata',
-  'Update metadata fields on an existing note without changing content. Useful for adding descriptions, tags, project, or scope.',
+  'Update metadata fields on an existing note without changing content. Useful for adding descriptions, tags, project, or scope. Protected notes (delivery: protected) require confirmed: true.',
   {
     id: z.coerce.number().describe('The note ID to update'),
     metadata: z.record(z.string(), z.unknown()).describe('Metadata fields to merge (existing fields are preserved unless overwritten)'),
+    confirmed: z.boolean().default(false).describe('Set to true to confirm update of protected notes. Required when the note has delivery: protected.'),
   },
-  async ({ id, metadata }) => {
-    const result = await opUpdateMetadata(clients, id, metadata);
+  async ({ id, metadata, confirmed }) => {
+    const result = await opUpdateMetadata(clients, id, metadata, confirmed);
     return { content: [{ type: 'text' as const, text: result.message }] };
   }
 );
