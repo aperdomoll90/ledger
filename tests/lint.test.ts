@@ -5,6 +5,8 @@ import {
   detectStack,
   getConfigsForStack,
   ESLINT_UNIVERSAL,
+  ESLINT_TS,
+  ESLINT_TS_REACT,
   ESLINT_PERSONAL,
   STYLELINT_UNIVERSAL,
   STYLELINT_PERSONAL,
@@ -101,6 +103,29 @@ describe('getConfigsForStack', () => {
     const parsed = JSON.parse(configs.stylelint!.content);
     expect(parsed.extends).toContain('./.stylelintrc.json');
   });
+
+  it('returns TS-only ESLint for TypeScript project without React', () => {
+    const configs = getConfigsForStack(
+      { hasPackageJson: true, hasTypeScript: true, hasReact: false, hasScss: false },
+      false,
+    );
+    expect(configs.eslint).not.toBeNull();
+    expect(configs.eslint!.content).toContain('no-explicit-any');
+    expect(configs.eslint!.content).not.toContain('eslint-plugin-react');
+    expect(configs.eslint!.content).not.toContain('jsx-a11y');
+    expect(configs.eslint!.content).not.toContain('button-has-type');
+  });
+
+  it('returns TS+React ESLint for React project', () => {
+    const configs = getConfigsForStack(
+      { hasPackageJson: true, hasTypeScript: true, hasReact: true, hasScss: false },
+      false,
+    );
+    expect(configs.eslint).not.toBeNull();
+    expect(configs.eslint!.content).toContain('eslint-plugin-react');
+    expect(configs.eslint!.content).toContain('jsx-a11y');
+    expect(configs.eslint!.content).toContain('button-has-type');
+  });
 });
 
 describe('lint config content', () => {
@@ -112,6 +137,20 @@ describe('lint config content', () => {
     expect(ESLINT_UNIVERSAL).toContain('anchor-is-valid');
     expect(ESLINT_UNIVERSAL).toContain('max-lines');
     expect(ESLINT_UNIVERSAL).toContain('no-console');
+  });
+
+  it('ESLint TS-only does NOT contain React rules', () => {
+    expect(ESLINT_TS).toContain('no-explicit-any');
+    expect(ESLINT_TS).toContain('consistent-type-definitions');
+    expect(ESLINT_TS).toContain('no-default-export');
+    expect(ESLINT_TS).not.toContain('react');
+    expect(ESLINT_TS).not.toContain('jsx-a11y');
+  });
+
+  it('ESLint TS+React contains both TS and React rules', () => {
+    expect(ESLINT_TS_REACT).toContain('no-explicit-any');
+    expect(ESLINT_TS_REACT).toContain('button-has-type');
+    expect(ESLINT_TS_REACT).toContain('jsx-a11y');
   });
 
   it('ESLint personal extends universal', () => {

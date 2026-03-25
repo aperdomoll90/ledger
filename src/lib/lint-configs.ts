@@ -3,7 +3,28 @@ import { resolve, join } from 'path';
 
 // --- Config Templates ---
 
-export const ESLINT_UNIVERSAL = `import tseslint from 'typescript-eslint';
+export const ESLINT_TS = `import tseslint from 'typescript-eslint';
+import importPlugin from 'eslint-plugin-import';
+
+export default tseslint.config(
+  ...tseslint.configs.recommended,
+  {
+    plugins: {
+      import: importPlugin,
+    },
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/consistent-type-definitions': ['error', 'interface'],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      'import/no-default-export': 'error',
+      'max-lines': ['warn', { max: 200, skipBlankLines: true, skipComments: true }],
+      'no-console': ['warn', { allow: ['error', 'warn'] }],
+    },
+  },
+);
+`;
+
+export const ESLINT_TS_REACT = `import tseslint from 'typescript-eslint';
 import reactPlugin from 'eslint-plugin-react';
 import jsxA11yPlugin from 'eslint-plugin-jsx-a11y';
 import importPlugin from 'eslint-plugin-import';
@@ -33,6 +54,9 @@ export default tseslint.config(
   },
 );
 `;
+
+// Backwards compat alias
+export const ESLINT_UNIVERSAL = ESLINT_TS_REACT;
 
 export const ESLINT_PERSONAL = `import universalConfig from './eslint.config.js';
 
@@ -165,7 +189,7 @@ export function getConfigsForStack(stack: ProjectStack, personal: boolean): Lint
   const eslint = needsEslint
     ? {
         filename: personal ? 'eslint.config.personal.js' : 'eslint.config.js',
-        content: personal ? ESLINT_PERSONAL : ESLINT_UNIVERSAL,
+        content: personal ? ESLINT_PERSONAL : (stack.hasReact ? ESLINT_TS_REACT : ESLINT_TS),
       }
     : null;
 

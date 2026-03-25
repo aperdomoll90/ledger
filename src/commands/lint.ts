@@ -5,7 +5,8 @@ import { createInterface } from 'readline';
 import {
   detectStack,
   getConfigsForStack,
-  ESLINT_UNIVERSAL,
+  ESLINT_TS,
+  ESLINT_TS_REACT,
   STYLELINT_UNIVERSAL,
   type ProjectStack,
   type LintConfigSet,
@@ -55,9 +56,9 @@ interface UniversalConfig {
   content: string;
 }
 
-function getUniversalConfigs(): { eslint: UniversalConfig; stylelint: UniversalConfig } {
+function getUniversalConfigs(hasReact: boolean): { eslint: UniversalConfig; stylelint: UniversalConfig } {
   return {
-    eslint: { filename: 'eslint.config.js', content: ESLINT_UNIVERSAL },
+    eslint: { filename: 'eslint.config.js', content: hasReact ? ESLINT_TS_REACT : ESLINT_TS },
     stylelint: { filename: '.stylelintrc.json', content: STYLELINT_UNIVERSAL },
   };
 }
@@ -118,12 +119,8 @@ export async function handleDiff(
 
 // --- checkDependencies ---
 
-const ESLINT_DEPS = [
-  'typescript-eslint',
-  'eslint-plugin-react',
-  'eslint-plugin-jsx-a11y',
-  'eslint-plugin-import',
-];
+const ESLINT_TS_DEPS = ['typescript-eslint', 'eslint-plugin-import'];
+const ESLINT_REACT_DEPS = ['eslint-plugin-react', 'eslint-plugin-jsx-a11y'];
 const STYLELINT_DEPS = ['stylelint', 'stylelint-config-standard-scss'];
 
 export async function checkDependencies(
@@ -152,8 +149,13 @@ export async function checkDependencies(
   const needsStylelint = stack.hasScss;
 
   if (needsEslint) {
-    for (const dep of ESLINT_DEPS) {
+    for (const dep of ESLINT_TS_DEPS) {
       if (!installed.has(dep)) needed.push(dep);
+    }
+    if (stack.hasReact) {
+      for (const dep of ESLINT_REACT_DEPS) {
+        if (!installed.has(dep)) needed.push(dep);
+      }
     }
   }
   if (needsStylelint) {
@@ -194,7 +196,7 @@ export async function lint(options: { personal: boolean; diff: boolean }): Promi
   console.error('');
 
   const configs = getConfigsForStack(stack, options.personal);
-  const universalConfigs = getUniversalConfigs();
+  const universalConfigs = getUniversalConfigs(stack.hasReact);
 
   if (!configs.eslint && !configs.stylelint) {
     console.error('No lint configs applicable for this stack (needs TypeScript, React, or SCSS).');
