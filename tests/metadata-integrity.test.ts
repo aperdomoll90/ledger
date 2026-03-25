@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chunkText } from '../src/lib/notes.js';
+import { chunkText, inferDelivery } from '../src/lib/notes.js';
 
 describe('chunk integrity', () => {
   it('chunkText returns single chunk for short content', () => {
@@ -16,5 +16,22 @@ describe('chunk integrity', () => {
       const endOfCurrent = chunks[i].slice(-50);
       expect(chunks[i + 1]).toContain(endOfCurrent.trim());
     }
+  });
+});
+
+describe('type/delivery validation', () => {
+  it('inferDelivery returns correct delivery for built-in types', () => {
+    expect(inferDelivery('code-craft')).toBe('persona');
+    expect(inferDelivery('architecture-decision')).toBe('project');
+    expect(inferDelivery('reference')).toBe('knowledge');
+    expect(inferDelivery('general')).toBe('knowledge');
+  });
+
+  it('inferDelivery returns knowledge for unknown types', () => {
+    expect(inferDelivery('nonexistent-type')).toBe('knowledge');
+  });
+
+  it('inferDelivery resolves type aliases', () => {
+    expect(inferDelivery('feedback')).toBe('knowledge'); // alias for 'general'
   });
 });

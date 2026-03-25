@@ -635,6 +635,21 @@ export async function opAddNote(
     }
   }
 
+  // Type/delivery conflict check
+  const explicitDelivery = metadata.delivery as string | undefined;
+  if (explicitDelivery && explicitDelivery !== inferDelivery(resolvedType)) {
+    const expectedDelivery = inferDelivery(resolvedType);
+    // Only warn if not already confirmed via a skip flag
+    if (!metadata.delivery_override) {
+      return {
+        status: 'confirm',
+        message: `Type "${resolvedType}" normally has "${expectedDelivery}" delivery, but you're setting "${explicitDelivery}".\n\nThis may cause unexpected sync behavior. To proceed, re-call add_note with metadata.delivery_override: true.`,
+      };
+    }
+    // Clean up the override flag before saving
+    delete metadata.delivery_override;
+  }
+
   // Auto-derive local_file from upsert_key for persona notes
   if (upsertKey && !metadata.local_file) {
     const delivery = metadata.delivery as string | undefined || inferDelivery(type);
