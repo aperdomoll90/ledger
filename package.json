@@ -1,6 +1,6 @@
 {
   "name": "@aperdomoll90/ledger-ai",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "AI identity and memory system — portable persona, knowledge sync, semantic search across agents and devices",
   "type": "module",
   "bin": {
