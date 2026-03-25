@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { resolve, join } from 'path';
 
 // --- Config Templates ---
+// Keep shared TS rules in sync between ESLINT_TS and ESLINT_TS_REACT
 
 export const ESLINT_TS = `import tseslint from 'typescript-eslint';
 import importPlugin from 'eslint-plugin-import';
