@@ -943,6 +943,21 @@ export async function opUpdateMetadata(
   }
 
   const merged = { ...existing.metadata as Record<string, unknown>, ...metadata };
+
+  // Type change cascading — auto-update delivery when type changes
+  const oldType = (existing.metadata as Record<string, unknown>).type as string | undefined;
+  const newType = metadata.type as string | undefined;
+  if (newType && oldType && newType !== oldType) {
+    const oldExpectedDelivery = inferDelivery(oldType);
+    const currentDelivery = (existing.metadata as Record<string, unknown>).delivery as string | undefined;
+
+    // Only auto-update if delivery wasn't manually overridden
+    if (!currentDelivery || currentDelivery === oldExpectedDelivery) {
+      merged.delivery = inferDelivery(newType);
+    }
+    // If delivery was manually set to something different, leave it alone
+  }
+
   const { error } = await clients.supabase
     .from('notes')
     .update({ metadata: merged })
