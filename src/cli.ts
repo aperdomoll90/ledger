@@ -26,6 +26,7 @@ import { update } from './commands/update.js';
 import { deleteNote } from './commands/delete.js';
 import { list } from './commands/list.js';
 import { tag } from './commands/tag.js';
+import { lint } from './commands/lint.js';
 
 process.on('unhandledRejection', (err) => {
   console.error(err instanceof Error ? err.message : String(err));
@@ -299,6 +300,15 @@ program
       project: options.project,
       scope: options.scope,
     });
+  });
+
+program
+  .command('lint')
+  .description('Add lint configs to the current project based on detected stack')
+  .option('--personal', 'include personal conventions (BEM, SCSS patterns)')
+  .option('--diff', 'compare local configs against Ledger versions')
+  .action(async (options) => {
+    await lint({ personal: options.personal ?? false, diff: options.diff ?? false });
   });
 
 program.parse();
