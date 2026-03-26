@@ -951,3 +951,36 @@ None — no code changes this session.
 
 ### Status
 No code changes, no build needed. Knowledge base significantly expanded. Immediate next: implement hybrid search (RAG enhancement #1) in Ledger codebase.
+
+---
+
+## Session 23 — 2026-03-25
+
+### Code Changes (12 commits, v1.4.0 + v1.4.1 published)
+- Split ESLint into TS-only and TS+React configs (lint-configs.ts, lint.ts)
+- Added UNIQUE index on upsert_key (migration 004)
+- Added `ledger check --chunks` for chunk integrity
+- Removed `.limit(1)` safety net from upsert lookups (DB constraint enforces now)
+- Added type/delivery conflict validation in opAddNote
+- Added auto-cascade delivery on type change in opUpdateMetadata
+- Published v1.4.0 and v1.4.1 to npm
+
+### Ledger Note Changes
+- Created `session-checkpoint` skill + system-rule-session-checkpoint note
+- Consolidated handoff procedures (#120, #129, #198)
+- Designed Ledger v2 production roadmap — 6 spec notes (roadmap + 5 phases)
+- 9 spec review issues found and fixed
+
+### Key Decisions
+- Ledger v2: bottom-up approach (database foundation → search → sync → access → observability)
+- Event-driven sync via Supabase Realtime (not polling)
+- Recursive chunking first, semantic later
+- Re-ranking deferred until metrics prove need
+- JWT-based per-agent auth replacing service role key
+- Audit log as linchpin serving 4 of 5 phases
+
+### Tests
+252 passing across 16 test files (was 243 at session start)
+
+### Status
+v1.4.1 published (needs OTP to complete). v2 roadmap fully spec'd with 5 phase documents in Ledger. Next: Phase 1 (database foundation — audit_log, schema_version, embedding metadata, backfill).
