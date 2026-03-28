@@ -984,3 +984,45 @@ No code changes, no build needed. Knowledge base significantly expanded. Immedia
 
 ### Status
 v1.4.1 published (needs OTP to complete). v2 roadmap fully spec'd with 5 phase documents in Ledger. Next: Phase 1 (database foundation — audit_log, schema_version, embedding metadata, backfill).
+
+---
+
+## Session 27 — 2026-03-28
+
+### Goal
+Separate AI Studio (now Atelier) from Ledger — Hunter agent code, database, and all agent infrastructure into its own repo and Supabase project.
+
+### Ledger Note Renames (19 updates)
+- Renamed all 17 `project: ai-studio` notes to `project: atelier`
+- Updated 12 architecture notes: upsert_keys (`ai-studio-*` → `atelier-*`), content ("AI Studio" → "Atelier")
+- Updated 5 skill/event notes: project metadata only
+- Updated project-status-dashboard (#118), user-learning-goals (#12), ledger-devlog (#117)
+
+### Atelier Repo Created
+- Moved `~/.claude/plugins/agent-teams/` → `~/repos/atelier/` (preserved 8 commits)
+- Renamed plugin: `agent-teams` → `atelier`, skill: `agent-teams` → `atelier`
+- Symlinked `~/.claude/plugins/atelier` → `~/repos/atelier/`
+- Extracted Hunter code from Ledger `feat/hunter-agent` branch into Atelier
+- Created Atelier-specific config system (`.env` + `config.json` in repo root)
+- 5 test files, 32 tests passing, clean build
+
+### Atelier Supabase
+- New project created (`ctevunlyqdlmishminuz`)
+- Applied 3 migrations: trigger function, opportunities, hunt_analytics
+- Migrated 172 opportunities from Ledger's Supabase → Atelier's Supabase
+
+### Ledger Cleanup
+- Deleted `feat/hunter-agent` branch (local + remote, 11 commits)
+- Removed `rss-parser` dependency
+- Removed `hunter` key from `~/.ledger/config.json`
+- Dropped `opportunities` and `hunt_analytics` tables from Ledger's Supabase
+- 252 tests still passing across 16 files
+
+### Key Decisions
+- Atelier = agent orchestration layer, Ledger = context/memory layer
+- Each system owns its own Supabase project
+- Atelier repo serves dual purpose: Claude Code plugin + npm package with runtime code
+- Secrets live in repo root `.env` (gitignored), not `~/.atelier/`
+
+### Status
+Clean separation complete. Ledger: 252 tests, no Hunter code. Atelier: 32 tests, 172 opportunities, own Supabase. Next: score opportunities, enable cron, research OpenCLI for Upwork.
