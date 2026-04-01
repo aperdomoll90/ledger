@@ -1026,3 +1026,249 @@ Separate AI Studio (now Atelier) from Ledger — Hunter agent code, database, an
 
 ### Status
 Clean separation complete. Ledger: 252 tests, no Hunter code. Atelier: 32 tests, 172 opportunities, own Supabase. Next: score opportunities, enable cron, research OpenCLI for Upwork.
+
+---
+
+## Session 28 — 2026-03-29 (v2 Data Model Design)
+
+### Setup
+- Installed zsh + Oh My Zsh on Linux workstation
+- Fixed MCP disconnection caused by shell switch (NVM/node not in new .zshrc)
+- Created dev environment setup note in Ledger (#251) — new machine playbook
+
+### v2 Data Model Redesign
+- Brainstormed full domain architecture: system, persona, workspace, project
+- Designed 4 protection levels: open, guarded, protected, immutable
+- Added `auto_load` field for granular context loading control
+- Added `owner_type`/`owner_id` for future team support
+- Added `file_path`/`file_permissions` for machine rebuild from DB
+- Decided CLAUDE.md = stored document (not generated from fragments)
+- Decided MEMORY.md = search guide pointing to Ledger (not local file index)
+- Dropped `delivery` field — replaced entirely by `domain`
+- Dropped devlog concept — replaced by audit_log + per-session event notes
+- Replaced monolithic error log with per-error notes
+- Defined complete type registry per domain with domain-scoped TypeScript unions
+- Wrote full spec to `docs/superpowers/specs/2026-03-28-v2-data-model-design.txt` and Ledger (#265)
+- Updated v2 roadmap (#209) with expanded Phase 1
+
+### Backups
+- Saved complete CLAUDE.md to Ledger (#266) as protected note
+- Updated Charlie persona note (#32) to match current CLAUDE.md
+
+### Key Decisions
+- One content table + separate audit_log (not separate tables per domain)
+- Skills are flat notes with `skill_ref` linking (no parent-child hierarchy yet)
+- `domain` replaces `delivery` — clean break, no coexistence period
+- Protection is orthogonal to domain (any domain can have any protection level)
+
+### Status
+v2 Phase 1 fully specced. Branch `feat/v2-phase-1-database` created with draft `005-audit-log.sql`. Next: write implementation plan, start building.
+
+---
+
+## Session 29 — 2026-03-29 (v2 Phase 1 Implementation)
+
+### Implementation
+- Wrote implementation plan (14 tasks) using writing-plans skill
+- Implemented all 14 tasks via subagent-driven development
+- Created `src/lib/domains.ts` — domain model with 5 domains, 4 protection levels, shared types
+- Created `src/lib/audit.ts` — audit log module (later simplified to just table verification)
+- Created `src/lib/backfill.ts` — v1→v2 metadata migration (pure function)
+- Created `src/lib/file-writer.ts` — write notes to disk with permissions
+- Created `src/commands/backfill.ts` — CLI command for backfill
+- Updated `src/lib/notes.ts` — NoteMetadata interface, domain model, protection flow, transactional writes
+- Updated `src/mcp-server.ts` — domain filter, protection descriptions
+- Updated `src/commands/add.ts` — domain-aware type picker
+- Created `src/migrations/005-audit-log.sql` — audit_log table with domain column
+- Created `src/migrations/006-audited-operations.sql` — 5 Postgres functions for transactional writes
+
+### Database Changes (applied to production)
+- Migration 004: upsert_key unique index
+- Migration 005: audit_log table
+- Migration 006: Postgres functions (note_create, note_update, note_replace, note_delete, note_update_metadata)
+- Ran backfill on 130 notes — all migrated to v2 metadata
+- Fixed 15 edge cases manually (misclassified types, wrong domains)
+
+### Design Decisions
+- Added 5th domain: `general` — for personal knowledge not tied to projects (restaurants, OAuth explainers, etc.)
+- Extracted shared types: ExtensionType (skill, hook, plugin-config), ResourceType (reference, knowledge, eval-result), DocType (claude-md, memory-md)
+- Workspace is purely informational — no extensions, no docs
+- hook and plugin-config valid in persona + system (not workspace)
+- claude-md and memory-md valid in persona + project (not workspace)
+- CLAUDE.md and MEMORY.md stored as complete documents, not generated — deleted generators.ts
+- All write operations use Postgres transactions (note + audit atomic)
+- No silent error handling — all errors surfaced to user
+- delivery field fully removed from codebase (no fallbacks, no coexistence)
+- Multi-user persona layering designed (global→user→project) using existing owner_type/owner_id
+
+### Dead Code Removed
+- Deleted `src/commands/sync.ts` — was overwriting CLAUDE.md incorrectly, rebuild in Phase 3
+- Deleted `src/commands/migrate.ts` — old file migration approach
+- Deleted `src/commands/wizard.ts` — depends on sync/migrate, rebuild post-restructure
+- Deleted `src/lib/generators.ts` — replaced by stored documents
+- Deleted `tests/migrate.command.test.ts`
+
+### Session 29 continued — Schema Rewrite Design
+
+### Production Database Work
+- Applied migrations 004 (upsert_key unique), 005 (audit_log), 006 (Postgres functions) on Supabase
+- Ran v2 backfill on 130 production notes — all migrated
+- Fixed 15 edge cases manually (misclassified types, wrong domains)
+- Fixed vector format bug — `supabase.rpc()` needs vector strings, not number arrays
+- Fixed chunked upsert_key duplicate bug — only first chunk keeps the name
+- Fixed audit silent-fail — errors now thrown, not swallowed
+- Fixed duplicate check silent-fail — errors surfaced to user
+
+### Schema Rewrite Spec (complete)
+Designed production-grade RAG schema rewrite from scratch. Spec at `docs/superpowers/specs/2026-03-29-schema-rewrite.md`.
+
+**11 tables designed:**
+- `documents` (was `notes`) — source of truth, all columns promoted from JSONB
+- `document_chunks` (was rows in `notes`) — search index, separate from content
+- `audit_log` ��� partitioned by year, auto-partition function
+- `agents` — agent registry with permissions (Phase 4)
+- `embedding_models` — model registry with FK from chunks
+- `query_cache` — embedding cache for repeated searches
+- `collections` + `document_collections` — arbitrary document grouping
+- `document_versions` — full content snapshots (not just diffs)
+- `search_evaluations` ��� search quality metrics
+- `ingestion_queue` — file processing pipeline for PDFs, audio, images
+
+**13 Postgres functions designed:**
+- Transactional writes (document_create, update, delete, restore, purge)
+- 3 search modes (vector, keyword, hybrid RRF fusion)
+- Smart retrieval (full doc vs chunk+neighbors based on size)
+- Auto-partition and cache cleanup utilities
+
+**Key design decisions:**
+- Renamed `notes` → `documents` (supports PDFs, audio, images — not just text notes)
+- Document-chunk separation (industry standard RAG pattern)
+- No JSONB metadata — every field is a real column with constraints
+- `name` column NOT NULL UNIQUE replaces `upsert_key`
+- `search_vector tsvector GENERATED` for keyword search (Phase 2 foundation)
+- Soft delete via `deleted_at` + 30-day purge
+- Multi-format source tracking (source_type, source_url)
+- Content metrics (content_length generated, chunk_count, retrieval_count)
+- Chunk metadata (content_type, chunk_strategy, overlap_chars, embedding_model_id)
+- Realtime publication + REPLICA IDENTITY FULL (Phase 3 foundation)
+
+### Research
+- Sage researched data modeling best practices — saved to `docs/superpowers/specs/2026-03-29-data-modeling-reference.md`
+- Pre-DDL checklist used for all schema decisions
+- Stored MEMORY.md as Ledger note #272 (persona/memory-md)
+
+### RAG Education
+- Learned full RAG pipeline: extraction → chunking → embedding → storage → retrieval
+- Learned HNSW index (layered graph for fast vector search)
+- Learned GIN index (inverted index for keyword search)
+- Learned document-chunk pattern (content vs search index separation)
+- Learned smart retrieval (full doc vs chunk+neighbors)
+- Learned hybrid search (RRF fusion of vector + keyword results)
+
+### Schema Implementation (in progress — mid-session checkpoint)
+Running Phase 1 database setup step by step in Supabase Dashboard.
+
+**Completed so far:**
+- Created all 9 tables: documents, document_chunks, audit_log (partitioned), agents, embedding_models, query_cache, document_versions, search_evaluations, ingestion_queue
+- Created all indexes: documents (7), document_chunks (8 including per-domain HNSW), audit_log (3), plus indexes on remaining tables
+- Created triggers: updated_at auto-trigger on documents
+- Created utility functions: create_audit_partition_if_needed, cleanup_query_cache, cleanup_document_versions
+- Discovered HNSW limitation: can't use subqueries in WHERE clause for partial vector indexes. Fix: denormalized `domain` column on document_chunks (standard pattern used by Pinecone, Weaviate, Qdrant)
+- Old `notes` table still live — side-by-side migration approach
+
+**Phase 1 Database Setup — COMPLETE:**
+- All 9 tables created and verified
+- All indexes created (53 total including per-domain HNSW vector indexes)
+- All triggers and utility functions (4: updated_at trigger, auto-partition, cache cleanup, version cleanup)
+- All transactional functions (6: document_create, update, update_fields, delete, purge, restore)
+- All search functions (4: match_documents vector, keyword, hybrid RRF, retrieve_context smart retrieval)
+- RLS enabled on all 9 tables — service_role full access, anon blocked. Verified via pg_policy query.
+- Realtime enabled on documents table with REPLICA IDENTITY FULL
+- Old v1 functions dropped (note_create, note_update, etc.)
+- Old `notes` table still live for migration
+
+**Key fixes during implementation:**
+- HNSW can't use subqueries → added denormalized `domain` column on document_chunks
+- document_update was missing `p_embedding_model_id` → fixed, chunks now get model ID
+- document_delete was missing fields in rollback JSONB → added file_permissions, content_hash, schema_version, created_at
+- Duplicate document_update function created by overloading → dropped old version
+- Renamed document_update_metadata → document_update_fields with typed params (no more JSONB input)
+- query_cache and embedding_models were missing RLS → added
+- SHA-256 via pgcrypto for all content hashing (not md5)
+
+**Database state:** 9 new tables + old `notes`, 53 indexes, 15 functions (11 new + 4 utility), all RLS verified
+
+**Testing:**
+- Installed pgTAP extension in Supabase for database unit testing
+- Wrote first test file: `tests/sql/001-document-functions.sql` (20 tests covering create, update_fields, delete, restore, constraints)
+- Ran manual DO block test — all assertions passed (create → update → delete → restore cycle)
+
+**Next session:**
+1. Set up automated database testing (pgTAP, proper test runner)
+2. Run full test suite against all functions
+3. Write migration script (TypeScript) — read from `notes` table, write to `documents` + `document_chunks`
+4. Run migration, verify counts match
+5. Rewrite TypeScript codebase (notes.ts → documents.ts, MCP server, CLI)
+6. Drop old `notes` table after verification
+7. Create Ledger database architecture note
+8. Commit all v2 changes
+
+### Stats
+- 294 TypeScript tests passing, 18 test files, typecheck clean
+- 20 pgTAP database tests written (not yet automated)
+- Nothing committed — all changes unstaged on feat/v2-phase-1-database
+- Database: 9 tables, 53 indexes, 15 functions, full RLS, Realtime enabled, pgTAP installed
+
+---
+
+## Session 30 — 2026-03-31 (v2 TypeScript Rewrite — Tasks 5-6 + E2E)
+
+### Continued from Session 29
+Picked up mid-Task 5 (ai-search.ts) — fixing type incompatibility across files.
+
+### Type Unification
+- Centralized client types in `document-classification.ts`: `ISupabaseClientProps`, `IOpenAIClientProps`, `IClientsProps`
+- Removed all local type definitions from `embeddings.ts`, `document-fetching.ts`, `ai-search.ts`
+- Fixed `rpc()` return type: `Promise` → `PromiseLike` (Supabase's `PostgrestFilterBuilder` is thenable but not a strict Promise)
+- All 5 library files now import types from one source — no circular deps
+
+### MCP Server Rewrite (Task 6)
+- Created `src/mcp-server.ts` from scratch — 16 tools total:
+  - **10 new tools:** `search_documents`, `add_document`, `list_documents`, `update_document`, `update_document_fields`, `delete_document`, `restore_document`, `search_by_meaning`, `search_by_keyword`, `get_document_context`
+  - **6 deprecated tools:** `search_notes`, `add_note`, `list_notes`, `update_note`, `update_metadata`, `delete_note` (redirect to new functions)
+- Protection checks at MCP layer: immutable → block, protected/guarded → require confirmed, open → proceed
+- All deprecated tools include `[DEPRECATED]` in description and suggest new tool name
+
+### Bugs Found and Fixed During E2E Testing
+1. **`embedding.join is not a function`** — Postgres returns `vector(1536)` columns as strings via REST API. Our `getOrCacheQueryEmbedding()` cached embeddings as vector strings, but assumed `number[]` on read. Created `parseVector()` helper (inverse of `toVectorString()`) to handle the round-trip. Old code never hit this because it had no query cache.
+2. **Search threshold too high** — Default was 0.5 (from cosine similarity convention). But the threshold gates the vector component *before* RRF fusion. Industry standard for `text-embedding-3-small` is 0.2-0.35. Lowered to 0.25. Old code used 0.3 with a fallback retry mechanism.
+
+### Key Design Decisions
+- **Structural typing over package imports** — `ISupabaseClientProps`/`IOpenAIClientProps` prevent Vitest from loading heavy packages (heap OOM fix from earlier session)
+- **RRF threshold ≠ cosine threshold** — RRF scores are rankings (~0.033 for 1 doc), not similarity. Threshold correctly applied pre-fusion on cosine similarity only
+- **All Postgres functions exposed** — added `restore_document`, `search_by_meaning`, `search_by_keyword`, `get_document_context` because if the function exists and an agent could use it, it should be accessible
+- **Direct SELECT for reads, RPC for writes** — `list_documents`/`getDocumentById` don't need transactional guarantees, so they query directly
+
+### Documentation Updated
+- `docs/superpowers/specs/2026-03-30-typescript-architecture.md` — structural typing section, updated function signatures, 10 new MCP tools, search defaults, testing summary, data flows with cache detail
+- `docs/superpowers/plans/2026-03-30-typescript-rewrite.md` — Task 6 complete, Task 8 partial, follow-up tasks (Supabase gen types, onboarding tool guide)
+
+### E2E Test Results (live database)
+All 6 core operations verified: add → search (semantic + keyword) → update content → update fields → delete → verify gone. Query cache round-trip verified.
+
+### Files Created/Modified
+- **Created:** `src/mcp-server.ts`, `tests/mcp-server.test.ts`
+- **Modified:** `src/lib/document-classification.ts` (client types + PromiseLike), `src/lib/embeddings.ts` (parseVector + IOpenAIClientProps), `src/lib/document-fetching.ts` (ISupabaseClientProps), `src/lib/ai-search.ts` (IClientsProps + threshold), `tests/embeddings.test.ts` (parseVector tests)
+
+### Stats
+- 43 TypeScript tests passing across 6 test files
+- 20 pgTAP database tests (from previous session)
+- 16 MCP tools (10 new + 6 deprecated)
+- Branch: `feat/v2-phase-1-database` — nothing committed yet
+- Old MCP tools were broken (called deleted Postgres functions) — rebuilt and verified working
+
+### Next Session
+1. Task 7: Cleanup old files + migration script (notes → documents)
+2. Task 8: Full E2E re-verification with migrated data
+3. Commit all v2 changes
+4. Follow-up: `supabase gen types`, onboarding tool guide
