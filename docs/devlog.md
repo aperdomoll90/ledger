@@ -1267,8 +1267,45 @@ All 6 core operations verified: add → search (semantic + keyword) → update c
 - Branch: `feat/v2-phase-1-database` — nothing committed yet
 - Old MCP tools were broken (called deleted Postgres functions) — rebuilt and verified working
 
+### Data Migration (Task 7)
+- Created `src/scripts/migrate-v2.ts` — reads from `notes` table, maps fields, calls `document_create` RPC
+- Dry run verified all 132 notes map cleanly: 0 chunk groups, 0 missing upsert_keys, all domains/types valid
+- Ran migration: 132/132 succeeded, 0 failures
+- Old `notes` table still exists as safety net
+
+### Ledger Document Restructure
+- Updated `ledger-product-vision` (#22) — mission, principles, RAG pipeline status, architecture overview
+- Created 5 architecture docs: `ledger-architecture` (#137, overview), `ledger-architecture-database` (#138), `ledger-architecture-database-functions` (#139), `ledger-architecture-typescript` (#140), `ledger-architecture-mcp-tools` (#141)
+- Updated `ledger-v2-roadmap` (#109) — phases 1-3 marked done, phases renumbered (old 3/4/5 → new 5/6/7)
+- Merged `ledger-current-work` into `project-status-dashboard` — one source of truth
+- Moved dashboard to workspace domain (cross-project)
+- Created `atelier-status-dashboard` (#142) with TODO for missing docs
+- Deleted 12 superseded/duplicate documents (#128, #90, #91, #92, #50, #51, #106, #110, #27, #111, #23, #47)
+- Renamed 7 docs for naming convention (starbrite-campaigns-*, workspace-*, knowledge-*)
+- Moved 12 skill/eval docs to `custom-skills` project
+- Moved 4 lint configs to workspace domain
+- Fixed 3 missing project fields (#12, #44, #41)
+- Updated CLAUDE.md: new IDs, new MCP tools, removed stale refs, synced Ledger copy (#129)
+
+### CLAUDE.md Changes
+- Breadcrumb IDs updated (12 references) to new document table IDs
+- MCP tools section: 10 new tools listed (was 6), grouped by category
+- Ledger breadcrumbs: added product-vision, architecture, devlog
+- Removed repo specs section (architecture doc is the entry point now)
+- Synced to Ledger (#129)
+
+### Stats
+- 44 TypeScript tests passing across 6 test files (was 43 — added parseVector tests)
+- 20 pgTAP database tests
+- 16 MCP tools (10 new + 6 deprecated)
+- ~117 active documents in Ledger (was ~132 before cleanup)
+- Branch: `feat/v2-phase-1-database` — committed TypeScript rewrite, migration script uncommitted
+
 ### Next Session
-1. Task 7: Cleanup old files + migration script (notes → documents)
-2. Task 8: Full E2E re-verification with migrated data
-3. Commit all v2 changes
-4. Follow-up: `supabase gen types`, onboarding tool guide
+1. Commit migration script + doc updates
+2. Run `UPDATE documents SET protection = 'open' WHERE id = 127;` then delete dead type-registry doc
+3. Drop old `notes` table
+4. Delete `src/_old_v1/` directory
+5. Housekeeping: move system-rule-mcp-registration and system-rule-naming-convention to persona domain
+6. Fix block-env.sh hook (.md write blocking)
+7. Phase 4 planning

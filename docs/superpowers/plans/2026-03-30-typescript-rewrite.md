@@ -99,11 +99,40 @@ We build bottom-up — files with no dependencies first, then files that import 
 
 ## Task 7: Cleanup + Migration
 
-**Delete:** `src/lib/notes.ts`, `src/lib/audit.ts`, `src/lib/backfill.ts`, `src/lib/domains.ts`
 **Create:** `src/scripts/migrate-v2.ts`
-**What:** Remove old code. Write a one-time script that reads from the `notes` table and writes to the `documents` table.
-**Why:** The old code references tables and functions that no longer exist. The migration script moves existing data to the new schema.
-**How:** Script reads each row from `notes`, maps old fields to new columns, chunks the content, generates embeddings, calls `document_create` RPC.
+**What:** Migrate ~130 notes from old `notes` table to new `documents` table via `document_create` RPC.
+
+### Migration script steps
+
+1. Read all rows from `notes` table
+2. Group chunked notes by `metadata.chunk_group`, reassemble content (ordered by `chunk_index`)
+3. For each unique document, map old fields to `ICreateDocumentProps`:
+   - `metadata.upsert_key` → `name` (fallback: `note-{id}`)
+   - `metadata.domain` → `domain` (fallback: `general`)
+   - `metadata.type` → `document_type` (fallback: `reference`)
+   - Reassembled `content` → `content`
+   - All other metadata fields map 1:1 to columns
+4. Call `createDocument()` for each — chunks, embeds, stores via RPC
+5. Log: old id(s) → new id, success/failure for each
+6. Print summary: total migrated, failed, skipped
+
+### Verification after migration
+
+- Count: documents table count matches unique notes (after chunk reassembly)
+- Search: `search_documents` finds known content
+- Spot-check: compare 5 random documents old vs new
+- After verification: `DROP TABLE notes CASCADE` (separate step, manual)
+
+### Cost
+
+~130 documents × ~1-3 chunks = ~200-400 OpenAI embedding calls ≈ $0.02
+
+### Approach decision
+
+Using `document_create` RPC (not direct INSERT) because:
+- Same code path as normal operation — tests the real system
+- Gets chunking + embedding + audit for free
+- Tradeoff: loses original `created_at` (acceptable — timestamps are in audit trail)
 
 ---
 
