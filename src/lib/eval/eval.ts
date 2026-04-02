@@ -25,6 +25,7 @@ export interface ITestResultProps {
   expectedTotal: number;
   position: number | null;
   responseTimeMs: number;
+  reciprocalRank: number;
 }
 
 export interface IEvalMetricsProps {
@@ -43,6 +44,7 @@ export interface IEvalMetricsProps {
   recall: number;
   zeroResultRate: number;
   outOfScopeAccuracy: number;
+  mrr: number;
   tagStats: Record<string, { total: number; hits: number; firstHits: number }>;
   missed: ITestResultProps[];
 }
@@ -71,6 +73,7 @@ export function scoreTestCase(
       expectedTotal: 0,
       position: null,
       responseTimeMs,
+      reciprocalRank: 0,
     };
   }
 
@@ -93,6 +96,7 @@ export function scoreTestCase(
     expectedTotal: testCase.expected_doc_ids.length,
     position: firstExpectedPosition,
     responseTimeMs,
+    reciprocalRank: firstExpectedPosition !== null ? 1 / (firstExpectedPosition + 1) : 0,
   };
 }
 
@@ -125,6 +129,8 @@ export function computeMetrics(results: ITestResultProps[]): IEvalMetricsProps {
     }
   }
 
+  const mrrSum = normalResults.reduce((sum, r) => sum + r.reciprocalRank, 0);
+
   return {
     totalCases: results.length,
     normalCases: totalNormal,
@@ -141,6 +147,7 @@ export function computeMetrics(results: ITestResultProps[]): IEvalMetricsProps {
     recall: totalExpected > 0 ? (totalFound / totalExpected) * 100 : 0,
     zeroResultRate: totalNormal > 0 ? (zeroResults / totalNormal) * 100 : 0,
     outOfScopeAccuracy: outOfScopeResults.length > 0 ? (outOfScopeCorrect / outOfScopeResults.length) * 100 : 0,
+    mrr: totalNormal > 0 ? mrrSum / totalNormal : 0,
     tagStats,
     missed: normalResults.filter(r => !r.hit),
   };
@@ -166,6 +173,7 @@ export function formatReport(metrics: IEvalMetricsProps): string {
   lines.push(`  Zero-result rate:      ${metrics.zeroResultRate.toFixed(1)}% (${metrics.zeroResults}/${metrics.normalCases} queries returned nothing)`);
   lines.push(`  Out-of-scope accuracy: ${metrics.outOfScopeAccuracy.toFixed(1)}% (${metrics.outOfScopeCorrect}/${metrics.outOfScopeCases} correctly returned nothing)`);
   lines.push(`  Avg response time:     ${metrics.avgResponseTimeMs.toFixed(0)}ms`);
+  lines.push(`  MRR:                   ${metrics.mrr.toFixed(3)} (1.0 = perfect ranking, 0.5 = avg position 2)`);
   lines.push('');
 
   if (metrics.missed.length > 0) {
