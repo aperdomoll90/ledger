@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, basename } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { fetchNoteHashes, checkChunkIntegrity } from '../lib/notes.js';
+import { fetchSyncableDocuments } from '../lib/document-fetching.js';
 import { contentHash } from '../lib/hash.js';
 
 export type FileState = 'clean' | 'modified' | 'upstream' | 'conflict' | 'unknown' | 'deleted';
@@ -9,7 +9,7 @@ export type FileState = 'clean' | 'modified' | 'upstream' | 'conflict' | 'unknow
 export interface FileStatus {
   file: string;
   state: FileState;
-  noteId?: number;
+  documentId?: number;
 }
 
 export interface CheckResult {
@@ -38,57 +38,64 @@ export async function check(config: LedgerConfig): Promise<CheckResult> {
     return result;
   }
 
-  const noteHashes = await fetchNoteHashes(config.supabase);
-  const notesByFile = new Map(noteHashes.map(n => [n.localFile, n]));
+  // Fetch all auto-load documents — these are the ones that sync locally
+  const syncableDocuments = await fetchSyncableDocuments(config.supabase);
+
+  // Build a map of local filename → document for comparison
+  const documentsByFile = new Map(
+    syncableDocuments
+      .filter(document => document.file_path)
+      .map(document => [basename(document.file_path!), document])
+  );
 
   const localFiles = readdirSync(config.memoryDir)
-    .filter(f => f.endsWith('.md') && f !== 'MEMORY.md');
+    .filter(file => file.endsWith('.md') && file !== 'MEMORY.md');
 
   for (const file of localFiles) {
     const filePath = resolve(config.memoryDir, file);
     const localContent = readFileSync(filePath, 'utf-8').trim();
     const localHash = contentHash(localContent);
 
-    const note = notesByFile.get(file);
+    const document = documentsByFile.get(file);
 
-    if (!note) {
+    if (!document) {
       console.error(`  ${file} — unknown (not in Ledger)`);
       result.files.push({ file, state: 'unknown' });
       result.unknown++;
-      notesByFile.delete(file);
+      documentsByFile.delete(file);
       continue;
     }
 
-    const ledgerHash = contentHash(note.content);
-    const storedHash = note.contentHash;
+    const ledgerHash = contentHash(document.content);
+    const storedHash = document.content_hash;
 
     const localChanged = localHash !== storedHash;
     const ledgerChanged = ledgerHash !== storedHash;
 
     if (!localChanged && !ledgerChanged) {
       console.error(`  ${file} — in sync`);
-      result.files.push({ file, state: 'clean', noteId: note.id });
+      result.files.push({ file, state: 'clean', documentId: document.id });
       result.clean++;
     } else if (localChanged && !ledgerChanged) {
       console.error(`  ${file} — modified locally`);
-      result.files.push({ file, state: 'modified', noteId: note.id });
+      result.files.push({ file, state: 'modified', documentId: document.id });
       result.modified++;
     } else if (!localChanged && ledgerChanged) {
       console.error(`  ${file} — updated in Ledger`);
-      result.files.push({ file, state: 'upstream', noteId: note.id });
+      result.files.push({ file, state: 'upstream', documentId: document.id });
       result.upstream++;
     } else {
       console.error(`  ${file} — CONFLICT (both changed)`);
-      result.files.push({ file, state: 'conflict', noteId: note.id });
+      result.files.push({ file, state: 'conflict', documentId: document.id });
       result.conflicts++;
     }
 
-    notesByFile.delete(file);
+    documentsByFile.delete(file);
   }
 
-  for (const [file, note] of notesByFile) {
+  for (const [file, document] of documentsByFile) {
     console.error(`  ${file} — missing locally (exists in Ledger)`);
-    result.files.push({ file, state: 'deleted', noteId: note.id });
+    result.files.push({ file, state: 'deleted', documentId: document.id });
     result.deleted++;
   }
 
@@ -108,19 +115,4 @@ export async function check(config: LedgerConfig): Promise<CheckResult> {
   }
 
   return result;
-}
-
-export async function checkChunks(config: LedgerConfig): Promise<void> {
-  console.error('Checking chunk integrity...');
-  const result = await checkChunkIntegrity(config.supabase);
-
-  if (result.incompleteGroups.length === 0) {
-    console.log('All chunk groups are complete.');
-    return;
-  }
-
-  console.error(`Found ${result.incompleteGroups.length} incomplete chunk group(s):`);
-  for (const group of result.incompleteGroups) {
-    console.error(`  group ${group.groupId}: expected ${group.expected} chunks, found ${group.found}`);
-  }
 }

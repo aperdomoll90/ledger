@@ -81,6 +81,56 @@ export interface IContextResultProps {
 }
 
 // =============================================================================
+// Search evaluation logging
+// =============================================================================
+
+/**
+ * Log a search to the search_evaluations table.
+ * Called after every search — silently records what was searched,
+ * what came back, and how long it took. This is the raw data
+ * that powers all evaluation, quality tracking, and improvement.
+ *
+ * Fire-and-forget: we don't await this. If logging fails,
+ * the search still returns results. The user never waits for logging.
+ */
+function logSearchEvaluation(
+  supabase: ISupabaseClientProps,
+  params: {
+    query: string;
+    searchMode: 'vector' | 'keyword' | 'hybrid';
+    results: ISearchResultProps[];
+    responseTimeMs: number;
+  },
+): void {
+  // Extract unique document_types and source_types from results
+  // These tell us which types of documents search finds well vs poorly
+  const documentTypes = [...new Set(params.results.map(result => result.document_type))];
+
+  // Build the results JSONB array — just IDs and scores, not full content
+  const resultsSummary = params.results.map(result => ({
+    id: result.id,
+    score: result.similarity ?? result.rank ?? result.score ?? null,
+    document_type: result.document_type,
+  }));
+
+  // Fire and forget — don't await, don't block the search response
+  supabase
+    .from('search_evaluations')
+    .insert({
+      query_text: params.query,
+      search_mode: params.searchMode,
+      result_count: params.results.length,
+      results: resultsSummary,
+      document_types: documentTypes,
+      response_time_ms: params.responseTimeMs,
+    })
+    .then(() => {})
+    .catch(() => {
+      // Silently ignore logging failures — search results matter more
+    });
+}
+
+// =============================================================================
 // Search functions
 // =============================================================================
 
@@ -98,6 +148,7 @@ export async function searchByVector(
   clients: IClientsProps,
   props: IVectorSearchProps,
 ): Promise<ISearchResultProps[]> {
+  const startTime = Date.now();
   const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
 
   const { data, error } = await clients.supabase.rpc('match_documents', {
@@ -110,7 +161,16 @@ export async function searchByVector(
   });
 
   if (error) throw new Error(`Vector search failed: ${error.message}`);
-  return (data ?? []) as ISearchResultProps[];
+  const results = (data ?? []) as ISearchResultProps[];
+
+  logSearchEvaluation(clients.supabase, {
+    query: props.query,
+    searchMode: 'vector',
+    results,
+    responseTimeMs: Date.now() - startTime,
+  });
+
+  return results;
 }
 
 /**
@@ -123,6 +183,7 @@ export async function searchByKeyword(
   supabase: ISupabaseClientProps,
   props: IKeywordSearchProps,
 ): Promise<ISearchResultProps[]> {
+  const startTime = Date.now();
   const { data, error } = await supabase.rpc('match_documents_keyword', {
     p_query: props.query,
     p_max_results: props.limit ?? 10,
@@ -132,7 +193,16 @@ export async function searchByKeyword(
   });
 
   if (error) throw new Error(`Keyword search failed: ${error.message}`);
-  return (data ?? []) as ISearchResultProps[];
+  const results = (data ?? []) as ISearchResultProps[];
+
+  logSearchEvaluation(supabase, {
+    query: props.query,
+    searchMode: 'keyword',
+    results,
+    responseTimeMs: Date.now() - startTime,
+  });
+
+  return results;
 }
 
 /**
@@ -150,6 +220,7 @@ export async function searchHybrid(
   clients: IClientsProps,
   props: IHybridSearchProps,
 ): Promise<ISearchResultProps[]> {
+  const startTime = Date.now();
   const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
 
   const { data, error } = await clients.supabase.rpc('match_documents_hybrid', {
@@ -164,7 +235,16 @@ export async function searchHybrid(
   });
 
   if (error) throw new Error(`Hybrid search failed: ${error.message}`);
-  return (data ?? []) as ISearchResultProps[];
+  const results = (data ?? []) as ISearchResultProps[];
+
+  logSearchEvaluation(clients.supabase, {
+    query: props.query,
+    searchMode: 'hybrid',
+    results,
+    responseTimeMs: Date.now() - startTime,
+  });
+
+  return results;
 }
 
 /**

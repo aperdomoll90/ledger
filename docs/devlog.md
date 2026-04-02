@@ -1309,3 +1309,177 @@ All 6 core operations verified: add → search (semantic + keyword) → update c
 5. Housekeeping: move system-rule-mcp-registration and system-rule-naming-convention to persona domain
 6. Fix block-env.sh hook (.md write blocking)
 7. Phase 4 planning
+
+---
+
+## Session 30 continued — 2026-04-01 (Phase 4 Planning + Documentation)
+
+### Cleanup completed
+- Deleted `src/_old_v1/` and `tests/_old_v1/` directories
+- Dropped old `notes` table (SQL in Supabase)
+- Deleted dead `system-rule-type-registry` (#127) — had to unlock immutable via SQL first
+- Added `check_documents_name_format` CHECK constraint on documents.name (lowercase, hyphens only)
+- All 43 TypeScript tests still passing
+
+### Schema changes applied (Supabase SQL)
+- `document_chunks.context_summary` text column — ready for contextual retrieval
+- `document_chunks.token_count` int column — ready for token budgeting
+- HNSW index on `query_cache.embedding` — ready for semantic cache lookup
+- `search_evaluations.document_types` text[] + `source_types` text[] — per-type quality tracking
+- `eval_golden_dataset` table + index + RLS — ready for golden dataset
+
+### Ledger document restructure (continued)
+- Reorganized all ~117 documents across projects
+- Renamed 7+ docs for naming convention (starbrite-campaigns-*, workspace-*, knowledge-*)
+- Moved 12 skill/eval docs to `custom-skills` project
+- Moved lint configs to workspace domain
+- Created `atelier-status-dashboard` (#142)
+- Merged `ledger-current-work` into `project-status-dashboard` — one source of truth
+- Updated `ledger-architecture-rag-features` (#145) with schema changes
+
+### Documentation created
+- `reference-rag-system-architecture` (#144) — complete production RAG reference, 1100+ lines
+  - 11 sections: ingestion, storage, search, eval, quality, observability, access control, scaling, security, API, deployment
+  - Feature inventory with sub-headers per function
+  - Complete table schemas for all 9+ tables
+  - Decision guide for starting new RAG projects
+  - Cost estimation, A/B testing process, migration guidance
+  - Security threats + defenses organized by layer
+- `convention-architecture-document-structure` (#143) — how to structure architecture docs (diagrams, per-area breakdown)
+- `docs/research/2026-03-31-rag-security-best-practices.md` — 1000-line security research (raw)
+- Feedback memory: architecture docs need visual diagrams
+
+### Phase 4 planned
+- 4.1: Auto-logging (wire search_evaluations)
+- 4.2: Golden dataset (50+ query/expected-doc pairs)
+- 4.3: Eval runner script
+- 4.4: Establish baseline
+- 4.5: Tune (recursive chunking → contextual retrieval → semantic cache → reranking → threshold)
+
+### Stats
+- 44 TypeScript tests, 6 test files
+- ~117 active documents in Ledger
+- 10 tables in database (9 original + eval_golden_dataset)
+- Old `notes` table dropped, `_old_v1` deleted
+- Branch: `feat/v2-phase-1-database`
+
+### Next Session
+1. Commit all changes
+2. Phase 4.1: Wire auto-logging to search_evaluations
+3. Phase 4.2: Curate golden dataset (50+ test cases)
+4. Phase 4.3: Build eval runner script
+5. Phase 4.4: Run baseline eval
+
+---
+
+## Session 31 — 2026-04-01 (Phase 4 Implementation Start)
+
+### Phase 4.1: Auto-logging — DONE
+- Created `logSearchEvaluation()` function in `ai-search.ts`
+- Captures: query, search mode, result count, result details (IDs + scores + types), document_types, response_time_ms
+- Added timing + logging to all 3 search functions: `searchByVector`, `searchByKeyword`, `searchHybrid`
+- Fire-and-forget pattern — logging doesn't block search response
+- Tested live: search for "ledger architecture overview" logged correctly (3 results, 4493ms, hybrid mode)
+- Fixed naming: `r.document_type` → `result.document_type` (no single-letter variables)
+
+### Database additions
+- Created `search_evaluation_aggregates` table — daily summaries (1 row/day instead of 50+ raw rows)
+- Created `aggregate_search_evaluations()` function — computes daily stats from raw rows
+  - Fixed CROSS JOIN LATERAL bug that would multiply row counts (used separate queries instead)
+- Created `cleanup_search_evaluations()` function — deletes raw rows older than 30 days
+- Tiered retention: raw (30 days) → daily aggregates (forever)
+
+### CLI commands rewritten for v2
+All 8 commands in `src/commands/` updated to use new library functions instead of deleted `notes.js`:
+
+| Command | Old function | New function |
+|---|---|---|
+| `list` | `opListNotes()` | `listDocuments()` |
+| `delete` | `opDeleteNote()` | `getDocumentById()` + `deleteDocument()` |
+| `update` | `opUpdateNote()` | `getDocumentById()` + `updateDocument()` |
+| `tag` | `opUpdateMetadata()` | `getDocumentById()` + `updateDocumentFields()` |
+| `show` | `searchNotes()` | `searchHybrid()` |
+| `export` | `searchNotes()` | `searchHybrid()` |
+| `push` | `findNoteByFile()` | `listDocuments()` + `updateDocument()` |
+| `check` | `fetchNoteHashes()` | `fetchSyncableDocuments()` + `contentHash()` |
+
+Removed `checkChunks()` from check.ts — v1 chunk integrity check no longer relevant (v2 chunks managed by RPC).
+
+### Documentation
+- RAG reference doc (`reference-rag-system-architecture.md`) — major updates:
+  - Added TOC
+  - Added "Starting a New RAG Project" decision guide with cost estimation
+  - Expanded Ingestion (## 1) to 9 numbered steps with migration guidance
+  - Expanded Quality Improvement (## 5) with A/B testing process and interpreting results
+  - Expanded Observability (## 6) with alerting thresholds, cost breakdown, tools
+  - Expanded Access Control (## 7) with auth models (RBAC/ABAC/ReBAC), multi-tenant patterns
+  - Added API Layer (## 10) — protocols, tool set, design principles
+  - Added Deployment & Infrastructure (## 11) — components, cron, backups, health checks
+  - Added Security (## 9) — threats + defenses by layer, defense-in-depth diagram
+  - Added security to feature inventory and production defaults
+- Updated Ledger RAG feature map (#145) — auto-logging marked done
+- Updated v2 roadmap (#109) — full step-by-step breakdown for all 7 phases
+- RAG security research doc created (`docs/research/2026-03-31-rag-security-best-practices.md`)
+- Architecture document convention saved (#143) — diagrams required in architecture docs
+- Added CLAUDE.md rule: never bypass RPC functions for document updates
+- Feedback memory: never direct `.update()` on documents table
+
+### Bug caught
+- Direct `.update()` on documents table bypasses chunking/embedding/audit — fixed #109 and #144
+- Added to Phase 6 roadmap: database trigger to enforce RPC-only writes
+
+### Stats
+- 44 TypeScript tests, 6 test files (unchanged)
+- 11 tables in database (added search_evaluation_aggregates)
+- 17 Postgres functions (added aggregate_search_evaluations, cleanup_search_evaluations)
+- Auto-logging live — every search now recorded
+- Build clean with all CLI commands included
+
+### Phase 4.2-4.4 completed same session
+
+**Golden dataset:** 56 test cases inserted into `eval_golden_dataset` table
+- 19 simple, 13 conceptual, 10 exact-term, 6 multi-doc, 4 cross-domain, 4 out-of-scope
+
+**Eval runner:** `src/scripts/eval-search.ts` — runs all test cases, computes metrics, prints report
+
+**Baseline results:**
+
+| Metric | Score | Target |
+|---|---|---|
+| Hit rate | 88.5% | > 90% |
+| First-result accuracy | 46.2% | > 85% |
+| Recall | 73.7% | > 90% |
+| Zero-result rate | 0.0% | < 5% |
+| Out-of-scope accuracy | 0.0% | > 80% |
+| Avg response time | 958ms | < 2000ms |
+
+Key findings: exact-term strong (100% hit), conceptual weak (77% hit, 31% first-result), first-result accuracy biggest gap. Saved as #146.
+
+**Database:** Added `eval_runs` table for storing eval run history persistently.
+
+### Documentation continued (same session)
+
+**RAG reference doc** (`reference-rag-system-architecture.md`):
+- Added production eval infrastructure section (run storage, auto-compare, regression detection, CI/CD gating, feedback collection, scheduled automation)
+- Added eval component index to ## 4
+- Added agents table to storage inventory + ERD
+- Slimmed storage detailed section — replaced 250 lines of column definitions with table index + link to schema doc
+- Aligned all inventory tables visually
+- Removed Ledger-specific references (domain columns, etc.) — doc is now fully generic
+
+**RAG schema doc** (`reference-rag-database-schemas.md`) — NEW:
+- 13 tables with column inventories grouped by concern + SQL CREATE statements
+- Tables grouped by function: Storage, Caching, History, Security, Ingestion, Evaluation
+- All indexes, functions (with full SQL for maintenance), triggers, RLS patterns
+- Generic — no project-specific columns, "add as needed" comments
+- Uploaded to Ledger as #147
+
+**CLAUDE.md** updated:
+- Added rule: documentation tables must be visually aligned
+
+### Next Session
+1. Commit all changes
+2. Create `reference-rag-api-patterns.md` (request/response, error handling, versioning)
+3. Create `reference-rag-setup-walkthrough.md` (zero to working RAG step-by-step)
+4. Upgrade eval runner to production-grade (save to eval_runs, auto-compare)
+5. Phase 4.5: Start tuning

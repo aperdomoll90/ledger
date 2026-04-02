@@ -1,31 +1,37 @@
 import type { LedgerConfig } from '../lib/config.js';
-import { opUpdateMetadata } from '../lib/notes.js';
+import { getDocumentById } from '../lib/document-fetching.js';
+import { updateDocumentFields } from '../lib/document-operations.js';
 
 export async function tag(
   config: LedgerConfig,
   id: number,
-  options: { description?: string; project?: string; scope?: string },
+  options: { description?: string; project?: string; domain?: string; status?: string },
 ): Promise<void> {
-  const metadata: Record<string, unknown> = {};
-  if (options.description) metadata.description = options.description;
-  if (options.project) metadata.project = options.project;
-  if (options.scope) metadata.scope = options.scope;
-
-  if (Object.keys(metadata).length === 0) {
-    console.error('No metadata fields provided. Use --description, --project, or --scope.');
+  if (!options.description && !options.project && !options.domain && !options.status) {
+    console.error('No fields provided. Use --description, --project, --domain, or --status.');
     process.exit(1);
   }
 
-  const result = await opUpdateMetadata(
-    { supabase: config.supabase, openai: config.openai },
+  const document = await getDocumentById(config.supabase, id);
+
+  if (!document) {
+    console.error(`Document ${id} not found.`);
+    process.exit(1);
+  }
+
+  if (document.protection === 'immutable') {
+    console.error(`Document "${document.name}" (id: ${id}) is immutable and cannot be updated.`);
+    process.exit(1);
+  }
+
+  await updateDocumentFields({ supabase: config.supabase, openai: config.openai }, {
     id,
-    metadata,
-  );
+    description: options.description,
+    project: options.project,
+    domain: options.domain as any,
+    status: options.status as any,
+    agent: 'cli',
+  });
 
-  if (result.status === 'error') {
-    console.error(result.message);
-    process.exit(1);
-  }
-
-  console.error(result.message);
+  console.error(`Document ${id} fields updated.`);
 }
