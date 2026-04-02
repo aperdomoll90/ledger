@@ -1,5 +1,5 @@
 // eval.test.ts
-// Unit tests for eval.ts — scoreTestCase, computeMetrics, formatReport.
+// Unit tests for eval.ts — scoreTestCase, computeMetrics, formatReport, compareRuns, formatComparison.
 
 import { describe, it, expect } from 'vitest';
 import type { ISearchResultProps } from '../src/lib/search/ai-search.js';
@@ -7,8 +7,11 @@ import {
   scoreTestCase,
   computeMetrics,
   formatReport,
+  compareRuns,
+  formatComparison,
   type IGoldenTestCaseProps,
   type ITestResultProps,
+  type IComparableMetricsProps,
 } from '../src/lib/eval/eval.js';
 
 // =============================================================================
@@ -151,5 +154,172 @@ describe('formatReport — MRR line', () => {
     const mrrIdx = report.indexOf('MRR:');
     expect(avgIdx).toBeGreaterThanOrEqual(0);
     expect(mrrIdx).toBeGreaterThan(avgIdx);
+  });
+});
+
+// =============================================================================
+// Helpers for compareRuns / formatComparison
+// =============================================================================
+
+function makeComparableMetrics(overrides: Partial<IComparableMetricsProps> = {}): IComparableMetricsProps {
+  return {
+    hitRate: 90,
+    firstResultAccuracy: 85,
+    recall: 80,
+    zeroResultRate: 5,
+    mrr: 0.75,
+    avgResponseTimeMs: 200,
+    ...overrides,
+  };
+}
+
+// =============================================================================
+// compareRuns — severity
+// =============================================================================
+
+describe('compareRuns — severity', () => {
+  it('all metrics improved → severity ok, regressions empty', () => {
+    const current = makeComparableMetrics({
+      hitRate: 92,
+      firstResultAccuracy: 87,
+      recall: 82,
+      zeroResultRate: 4,
+      mrr: 0.80,
+      avgResponseTimeMs: 180,
+    });
+    const previous = makeComparableMetrics();
+    const comparison = compareRuns(current, previous);
+    expect(comparison.severity).toBe('ok');
+    expect(comparison.regressions).toHaveLength(0);
+  });
+
+  it('hitRate drops by 3% → severity warning', () => {
+    const current = makeComparableMetrics({ hitRate: 87 });
+    const previous = makeComparableMetrics({ hitRate: 90 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.severity).toBe('warning');
+    expect(comparison.regressions.some(diff => diff.metric === 'hitRate')).toBe(true);
+  });
+
+  it('hitRate drops by 6% → severity block', () => {
+    const current = makeComparableMetrics({ hitRate: 84 });
+    const previous = makeComparableMetrics({ hitRate: 90 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.severity).toBe('block');
+  });
+
+  it('hitRate below 80% → severity critical', () => {
+    const current = makeComparableMetrics({ hitRate: 78 });
+    const previous = makeComparableMetrics({ hitRate: 85 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.severity).toBe('critical');
+  });
+
+  it('zeroResultRate above 10% → severity critical', () => {
+    const current = makeComparableMetrics({ zeroResultRate: 12 });
+    const previous = makeComparableMetrics({ zeroResultRate: 8 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.severity).toBe('critical');
+  });
+});
+
+// =============================================================================
+// compareRuns — inverted metrics
+// =============================================================================
+
+describe('compareRuns — inverted metrics', () => {
+  it('zeroResultRate decrease is an improvement', () => {
+    const current = makeComparableMetrics({ zeroResultRate: 3 });
+    const previous = makeComparableMetrics({ zeroResultRate: 5 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.improvements.some(diff => diff.metric === 'zeroResultRate')).toBe(true);
+    expect(comparison.regressions.some(diff => diff.metric === 'zeroResultRate')).toBe(false);
+  });
+
+  it('avgResponseTimeMs decrease is an improvement', () => {
+    const current = makeComparableMetrics({ avgResponseTimeMs: 150 });
+    const previous = makeComparableMetrics({ avgResponseTimeMs: 200 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.improvements.some(diff => diff.metric === 'avgResponseTimeMs')).toBe(true);
+    expect(comparison.regressions.some(diff => diff.metric === 'avgResponseTimeMs')).toBe(false);
+  });
+
+  it('zeroResultRate increase is a regression', () => {
+    const current = makeComparableMetrics({ zeroResultRate: 8 });
+    const previous = makeComparableMetrics({ zeroResultRate: 5 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.regressions.some(diff => diff.metric === 'zeroResultRate')).toBe(true);
+    expect(comparison.improvements.some(diff => diff.metric === 'zeroResultRate')).toBe(false);
+  });
+
+  it('avgResponseTimeMs increase is a regression', () => {
+    const current = makeComparableMetrics({ avgResponseTimeMs: 250 });
+    const previous = makeComparableMetrics({ avgResponseTimeMs: 200 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.regressions.some(diff => diff.metric === 'avgResponseTimeMs')).toBe(true);
+    expect(comparison.improvements.some(diff => diff.metric === 'avgResponseTimeMs')).toBe(false);
+  });
+});
+
+// =============================================================================
+// compareRuns — unchanged threshold
+// =============================================================================
+
+describe('compareRuns — unchanged threshold', () => {
+  it('change smaller than 0.01 is classified as unchanged', () => {
+    const current = makeComparableMetrics({ hitRate: 90.005 });
+    const previous = makeComparableMetrics({ hitRate: 90 });
+    const comparison = compareRuns(current, previous);
+    expect(comparison.unchanged.some(diff => diff.metric === 'hitRate')).toBe(true);
+    expect(comparison.improvements.some(diff => diff.metric === 'hitRate')).toBe(false);
+    expect(comparison.regressions.some(diff => diff.metric === 'hitRate')).toBe(false);
+  });
+});
+
+// =============================================================================
+// formatComparison
+// =============================================================================
+
+describe('formatComparison', () => {
+  it('includes severity label in output', () => {
+    const current = makeComparableMetrics({ hitRate: 87 });
+    const previous = makeComparableMetrics({ hitRate: 90 });
+    const comparison = compareRuns(current, previous);
+    const report = formatComparison(comparison);
+    expect(report).toContain('warning');
+  });
+
+  it('shows REGRESSIONS section when regressions exist', () => {
+    const current = makeComparableMetrics({ hitRate: 87 });
+    const previous = makeComparableMetrics({ hitRate: 90 });
+    const comparison = compareRuns(current, previous);
+    const report = formatComparison(comparison);
+    expect(report).toContain('REGRESSIONS');
+    expect(report).toContain('hitRate');
+  });
+
+  it('shows IMPROVEMENTS section when improvements exist', () => {
+    const current = makeComparableMetrics({ hitRate: 95 });
+    const previous = makeComparableMetrics({ hitRate: 90 });
+    const comparison = compareRuns(current, previous);
+    const report = formatComparison(comparison);
+    expect(report).toContain('IMPROVEMENTS');
+    expect(report).toContain('hitRate');
+  });
+
+  it('shows UNCHANGED section when unchanged metrics exist', () => {
+    const current = makeComparableMetrics({ hitRate: 90.005 });
+    const previous = makeComparableMetrics();
+    const comparison = compareRuns(current, previous);
+    const report = formatComparison(comparison);
+    expect(report).toContain('UNCHANGED');
+  });
+
+  it('formats MRR with .toFixed(3) precision', () => {
+    const current = makeComparableMetrics({ mrr: 0.825 });
+    const previous = makeComparableMetrics({ mrr: 0.75 });
+    const comparison = compareRuns(current, previous);
+    const report = formatComparison(comparison);
+    expect(report).toContain('0.825');
   });
 });
