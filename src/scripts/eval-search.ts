@@ -10,8 +10,9 @@ import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import type { IClientsProps } from '../lib/documents/classification.js';
 import { searchHybrid } from '../lib/search/ai-search.js';
-import { scoreTestCase, computeMetrics, formatReport } from '../lib/eval/eval.js';
+import { scoreTestCase, computeMetrics, formatReport, compareRuns, formatComparison } from '../lib/eval/eval.js';
 import type { IGoldenTestCaseProps, ITestResultProps } from '../lib/eval/eval.js';
+import { saveEvalRun, loadPreviousRun } from '../lib/eval/eval-store.js';
 
 // =============================================================================
 // Setup
@@ -32,6 +33,19 @@ const clients: IClientsProps = {
 };
 
 // =============================================================================
+// Search config — snapshot saved with each run for reproducibility
+// =============================================================================
+
+const SEARCH_CONFIG = {
+  threshold:       0.25,
+  rrf_k:           60,
+  embedding_model: 'openai/text-embedding-3-small',
+  limit:           10,
+  chunking:        'paragraph',
+  reranker:        'none',
+};
+
+// =============================================================================
 // Run eval
 // =============================================================================
 
@@ -39,6 +53,13 @@ async function runEval(): Promise<void> {
   console.log('\n' + '='.repeat(60));
   console.log('Ledger Search Evaluation');
   console.log('='.repeat(60) + '\n');
+
+  const previousRun = await loadPreviousRun(clients.supabase);
+  if (previousRun) {
+    console.log(`Previous run: ${previousRun.run_date} (id: ${previousRun.id})\n`);
+  } else {
+    console.log('No previous run found — this will be the first stored run.\n');
+  }
 
   const { data: testCases, error } = await clients.supabase
     .from('eval_golden_dataset')
@@ -74,6 +95,35 @@ async function runEval(): Promise<void> {
 
   const metrics = computeMetrics(results);
   console.log('\n' + formatReport(metrics));
+
+  const runId = await saveEvalRun(clients.supabase, {
+    metrics,
+    config: SEARCH_CONFIG,
+    results,
+  });
+  console.log(`\nRun saved to eval_runs (id: ${runId})`);
+
+  if (previousRun) {
+    const comparison = compareRuns(
+      {
+        hitRate:             metrics.hitRate,
+        firstResultAccuracy: metrics.firstResultAccuracy,
+        recall:              metrics.recall,
+        zeroResultRate:      metrics.zeroResultRate,
+        mrr:                 metrics.mrr,
+        avgResponseTimeMs:   metrics.avgResponseTimeMs,
+      },
+      {
+        hitRate:             previousRun.hit_rate,
+        firstResultAccuracy: previousRun.first_result_accuracy,
+        recall:              previousRun.recall,
+        zeroResultRate:      previousRun.zero_result_rate,
+        mrr:                 0, // Previous runs before MRR was added won't have it
+        avgResponseTimeMs:   previousRun.avg_response_time_ms,
+      },
+    );
+    console.log('\n' + formatComparison(comparison));
+  }
 }
 
 runEval().catch((error) => {
