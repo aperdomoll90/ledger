@@ -13,10 +13,10 @@ export async function backup(config: LedgerConfig, options: BackupOptions): Prom
   const backupDir = resolve(getLedgerDir(), 'backups');
   mkdirSync(backupDir, { recursive: true });
 
-  // Fetch all notes (not just cached)
+  // Fetch all documents (not just cached)
   const { data, error } = await config.supabase
-    .from('notes')
-    .select('id, content, metadata, created_at, updated_at')
+    .from('documents')
+    .select('id, name, domain, document_type, project, protection, content, description, status, created_at, updated_at')
     .order('id', { ascending: true });
 
   if (error) {
@@ -25,7 +25,7 @@ export async function backup(config: LedgerConfig, options: BackupOptions): Prom
   }
 
   if (!data || data.length === 0) {
-    if (!quiet) console.error('No notes to backup.');
+    if (!quiet) console.error('No documents to backup.');
     return;
   }
 
@@ -36,7 +36,7 @@ export async function backup(config: LedgerConfig, options: BackupOptions): Prom
 
   // Keep last 5 backups, delete older
   const backups = readdirSync(backupDir)
-    .filter(f => f.endsWith('.json'))
+    .filter(file => file.endsWith('.json'))
     .sort()
     .reverse();
 
@@ -46,7 +46,7 @@ export async function backup(config: LedgerConfig, options: BackupOptions): Prom
   }
 
   if (!quiet) {
-    console.error(`Backed up ${data.length} notes to ${filePath}`);
+    console.error(`Backed up ${data.length} documents to ${filePath}`);
   }
   console.log(filePath);
 }

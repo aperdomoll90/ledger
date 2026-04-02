@@ -88,10 +88,10 @@ describe('scoreTestCase — reciprocalRank', () => {
 });
 
 // =============================================================================
-// computeMetrics — mrr
+// computeMetrics — meanReciprocalRank
 // =============================================================================
 
-describe('computeMetrics — mrr', () => {
+describe('computeMetrics — meanReciprocalRank', () => {
   it('computes MRR across multiple results: (1/1 + 1/2 + 0) / 3 = 0.5', () => {
     const results: ITestResultProps[] = [
       // position 0 → RR = 1
@@ -102,7 +102,7 @@ describe('computeMetrics — mrr', () => {
       scoreTestCase(makeTestCase([30]), [makeResult(1), makeResult(2)], 50),
     ];
     const metrics = computeMetrics(results);
-    expect(metrics.mrr).toBeCloseTo((1 + 0.5 + 0) / 3);
+    expect(metrics.meanReciprocalRank).toBeCloseTo((1 + 0.5 + 0) / 3);
   });
 
   it('out-of-scope results are excluded from MRR denominator', () => {
@@ -114,15 +114,15 @@ describe('computeMetrics — mrr', () => {
     ];
     const metrics = computeMetrics(results);
     // Only 1 normal result; MRR = 1 / 1 = 1.0
-    expect(metrics.mrr).toBeCloseTo(1.0);
+    expect(metrics.meanReciprocalRank).toBeCloseTo(1.0);
   });
 
-  it('no normal results → mrr is 0', () => {
+  it('no normal results → meanReciprocalRank is 0', () => {
     const results: ITestResultProps[] = [
       scoreTestCase(makeTestCase([]), [], 50),
     ];
     const metrics = computeMetrics(results);
-    expect(metrics.mrr).toBe(0);
+    expect(metrics.meanReciprocalRank).toBe(0);
   });
 });
 
@@ -150,10 +150,10 @@ describe('formatReport — MRR line', () => {
     ];
     const metrics = computeMetrics(results);
     const report = formatReport(metrics);
-    const avgIdx = report.indexOf('Avg response time:');
-    const mrrIdx = report.indexOf('MRR:');
-    expect(avgIdx).toBeGreaterThanOrEqual(0);
-    expect(mrrIdx).toBeGreaterThan(avgIdx);
+    const averageResponseTimeIndex = report.indexOf('Avg response time:');
+    const meanReciprocalRankIndex = report.indexOf('MRR:');
+    expect(averageResponseTimeIndex).toBeGreaterThanOrEqual(0);
+    expect(meanReciprocalRankIndex).toBeGreaterThan(averageResponseTimeIndex);
   });
 });
 
@@ -167,7 +167,7 @@ function makeComparableMetrics(overrides: Partial<IComparableMetricsProps> = {})
     firstResultAccuracy: 85,
     recall: 80,
     zeroResultRate: 5,
-    mrr: 0.75,
+    meanReciprocalRank: 0.75,
     avgResponseTimeMs: 200,
     ...overrides,
   };
@@ -184,7 +184,7 @@ describe('compareRuns — severity', () => {
       firstResultAccuracy: 87,
       recall: 82,
       zeroResultRate: 4,
-      mrr: 0.80,
+      meanReciprocalRank: 0.80,
       avgResponseTimeMs: 180,
     });
     const previous = makeComparableMetrics();
@@ -316,8 +316,8 @@ describe('formatComparison', () => {
   });
 
   it('formats MRR with .toFixed(3) precision', () => {
-    const current = makeComparableMetrics({ mrr: 0.825 });
-    const previous = makeComparableMetrics({ mrr: 0.75 });
+    const current = makeComparableMetrics({ meanReciprocalRank: 0.825 });
+    const previous = makeComparableMetrics({ meanReciprocalRank: 0.75 });
     const comparison = compareRuns(current, previous);
     const report = formatComparison(comparison);
     expect(report).toContain('0.825');

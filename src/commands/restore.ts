@@ -2,11 +2,19 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
 import { confirm } from '../lib/prompt.js';
+import { createDocument } from '../lib/documents/operations.js';
+import type { IClientsProps } from '../lib/documents/classification.js';
 
-interface BackupNote {
+interface IBackupDocumentProps {
   id: number;
+  name: string;
+  domain: string;
+  document_type: string;
+  project: string | null;
+  protection: string;
   content: string;
-  metadata: Record<string, unknown>;
+  description: string | null;
+  status: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -19,24 +27,24 @@ export async function restore(config: LedgerConfig, filePath: string): Promise<v
     process.exit(1);
   }
 
-  let notes: BackupNote[];
+  let documents: IBackupDocumentProps[];
   try {
-    notes = JSON.parse(readFileSync(absPath, 'utf-8'));
+    documents = JSON.parse(readFileSync(absPath, 'utf-8'));
   } catch {
     console.error('Invalid JSON file.');
     process.exit(1);
   }
 
-  console.error(`Found ${notes.length} notes in backup.`);
+  console.error(`Found ${documents.length} documents in backup.`);
 
   // Check current database
   const { count } = await config.supabase
-    .from('notes')
+    .from('documents')
     .select('*', { count: 'exact', head: true });
 
   if (count && count > 0) {
-    console.error(`Database already has ${count} notes.`);
-    const proceed = await confirm('Restore will add notes (not replace). Continue?');
+    console.error(`Database already has ${count} documents.`);
+    const proceed = await confirm('Restore will add documents (not replace). Continue?');
     if (!proceed) {
       console.error('Cancelled.');
       return;
@@ -45,49 +53,46 @@ export async function restore(config: LedgerConfig, filePath: string): Promise<v
 
   console.error('Restoring...\n');
 
+  const clients: IClientsProps = {
+    supabase: config.supabase,
+    openai: config.openai,
+  };
+
   let restored = 0;
   let skipped = 0;
 
-  for (const note of notes) {
-    // Check for existing note with same upsert_key
-    const upsertKey = note.metadata.upsert_key as string | undefined;
-    if (upsertKey) {
-      const { data: existing } = await config.supabase
-        .from('notes')
-        .select('id')
-        .eq('metadata->>upsert_key', upsertKey)
-        .limit(1)
-        .single();
+  for (const document of documents) {
+    // Check for existing document with same name (UNIQUE in v2)
+    const { data: existing } = await config.supabase
+      .from('documents')
+      .select('id')
+      .eq('name', document.name)
+      .limit(1)
+      .single();
 
-      if (existing) {
-        console.error(`  skip "${upsertKey}" (already exists)`);
-        skipped++;
-        continue;
-      }
-    }
-
-    // Generate embedding
-    const embeddingResponse = await config.openai.embeddings.create({
-      model: 'text-embedding-3-small',
-      input: note.content,
-    });
-    const embedding = embeddingResponse.data[0].embedding;
-
-    const { error } = await config.supabase
-      .from('notes')
-      .insert({
-        content: note.content,
-        metadata: note.metadata,
-        embedding,
-      });
-
-    if (error) {
-      console.error(`  error restoring note ${note.id}: ${error.message}`);
+    if (existing) {
+      console.error(`  skip "${document.name}" (already exists)`);
+      skipped++;
       continue;
     }
 
-    const label = upsertKey || `note-${note.id}`;
-    console.error(`  restored "${label}"`);
+    try {
+      await createDocument(clients, {
+        name: document.name,
+        domain: document.domain as Parameters<typeof createDocument>[1]['domain'],
+        document_type: document.document_type,
+        project: document.project ?? undefined,
+        protection: document.protection as Parameters<typeof createDocument>[1]['protection'],
+        content: document.content,
+        description: document.description ?? undefined,
+        status: document.status as Parameters<typeof createDocument>[1]['status'] ?? undefined,
+      });
+    } catch (error) {
+      console.error(`  error restoring "${document.name}": ${(error as Error).message}`);
+      continue;
+    }
+
+    console.error(`  restored "${document.name}"`);
     restored++;
   }
 

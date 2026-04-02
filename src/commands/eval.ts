@@ -1,13 +1,4 @@
-// eval-search.ts
-// Run the golden dataset through search, compute metrics, print report.
-//
-// Run: npx tsx src/scripts/eval-search.ts
-// This gives us a measurable score for search quality.
-// Every future change gets compared against this baseline.
-
-import 'dotenv/config';
-import { createClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
+import type { LedgerConfig } from '../lib/config.js';
 import type { IClientsProps } from '../lib/documents/classification.js';
 import { searchHybrid } from '../lib/search/ai-search.js';
 import { scoreTestCase, computeMetrics, formatReport, compareRuns, formatComparison } from '../lib/eval/eval.js';
@@ -15,43 +6,39 @@ import type { IGoldenTestCaseProps, ITestResultProps } from '../lib/eval/eval.js
 import { saveEvalRun, loadPreviousRun } from '../lib/eval/eval-store.js';
 
 // =============================================================================
-// Setup
+// Interfaces
 // =============================================================================
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const openaiKey = process.env.OPENAI_API_KEY;
-
-if (!supabaseUrl || !supabaseKey || !openaiKey) {
-  console.error('Missing SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or OPENAI_API_KEY');
-  process.exit(1);
+export interface IEvalOptionsProps {
+  dryRun: boolean;
 }
-
-const clients: IClientsProps = {
-  supabase: createClient(supabaseUrl, supabaseKey),
-  openai: new OpenAI({ apiKey: openaiKey }),
-};
 
 // =============================================================================
 // Search config — snapshot saved with each run for reproducibility
 // =============================================================================
 
 const SEARCH_CONFIG = {
-  threshold:       0.25,
+  threshold:             0.25,
   reciprocalRankFusionK: 60,
-  embedding_model: 'openai/text-embedding-3-small',
-  limit:           10,
-  chunking:        'paragraph',
-  reranker:        'none',
+  embedding_model:       'openai/text-embedding-3-small',
+  limit:                 10,
+  chunking:              'paragraph',
+  reranker:              'none',
 };
 
 // =============================================================================
-// Run eval
+// Command
 // =============================================================================
 
-async function runEval(): Promise<void> {
+export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProps): Promise<void> {
+  const clients: IClientsProps = {
+    supabase: config.supabase,
+    openai:   config.openai,
+  };
+
   console.log('\n' + '='.repeat(60));
   console.log('Ledger Search Evaluation');
+  if (options.dryRun) console.log('(dry run — results will not be saved)');
   console.log('='.repeat(60) + '\n');
 
   const previousRun = await loadPreviousRun(clients.supabase);
@@ -67,11 +54,11 @@ async function runEval(): Promise<void> {
     .order('id');
 
   if (error || !testCases) {
-    console.error('Failed to load golden dataset:', error?.message);
+    process.stderr.write(`Failed to load golden dataset: ${(error as { message: string } | null)?.message ?? 'no data'}\n`);
     process.exit(1);
   }
 
-  console.log(`Loaded ${testCases.length} test cases.\n`);
+  console.log(`Loaded ${(testCases as IGoldenTestCaseProps[]).length} test cases.\n`);
 
   const results: ITestResultProps[] = [];
 
@@ -81,7 +68,6 @@ async function runEval(): Promise<void> {
     const result = scoreTestCase(testCase, searchResults, Date.now() - startTime);
     results.push(result);
 
-    // Live progress
     const isOutOfScope = testCase.expected_doc_ids.length === 0;
     if (isOutOfScope) {
       const status = result.hit ? 'PASS' : `NOISE (${result.returnedIds.length} results)`;
@@ -96,12 +82,14 @@ async function runEval(): Promise<void> {
   const metrics = computeMetrics(results);
   console.log('\n' + formatReport(metrics));
 
-  const runId = await saveEvalRun(clients.supabase, {
-    metrics,
-    config: SEARCH_CONFIG,
-    results,
-  });
-  console.log(`\nRun saved to eval_runs (id: ${runId})`);
+  if (!options.dryRun) {
+    const runId = await saveEvalRun(clients.supabase, {
+      metrics,
+      config: SEARCH_CONFIG,
+      results,
+    });
+    process.stderr.write(`\nRun saved to eval_runs (id: ${runId})\n`);
+  }
 
   if (previousRun) {
     const comparison = compareRuns(
@@ -125,8 +113,3 @@ async function runEval(): Promise<void> {
     console.log('\n' + formatComparison(comparison));
   }
 }
-
-runEval().catch((error) => {
-  console.error('Eval crashed:', error);
-  process.exit(1);
-});

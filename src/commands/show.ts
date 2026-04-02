@@ -24,7 +24,7 @@ export async function show(config: LedgerConfig, query: string, options: ShowOpt
   );
 
   if (results.length === 0) {
-    fatal('No matching documents found.', ExitCode.NOTE_NOT_FOUND);
+    fatal('No matching documents found.', ExitCode.DOCUMENT_NOT_FOUND);
   }
 
   const document = results[0];

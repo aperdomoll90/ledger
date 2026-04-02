@@ -1,9 +1,9 @@
 import type { LedgerConfig } from '../lib/config.js';
 import { getDocumentById } from '../lib/documents/fetching.js';
-import { deleteDocument } from '../lib/documents/operations.js';
+import { deleteDocument as deleteDocumentOperation } from '../lib/documents/operations.js';
 import { confirm } from '../lib/prompt.js';
 
-export async function deleteNote(
+export async function removeDocument(
   config: LedgerConfig,
   id: number,
 ): Promise<void> {
@@ -31,6 +31,6 @@ export async function deleteNote(
     return;
   }
 
-  await deleteDocument({ supabase: config.supabase, openai: config.openai }, id, 'cli');
+  await deleteDocumentOperation({ supabase: config.supabase, openai: config.openai }, id, 'cli');
   console.error(`Document ${id} soft-deleted. Can be restored within 30 days.`);
 }

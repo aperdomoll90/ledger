@@ -24,9 +24,9 @@ export async function askMasked(question: string): Promise<string> {
     }
     process.stdin.resume();
 
-    const onData = (buf: Buffer) => {
-      const c = buf.toString();
-      if (c === '\n' || c === '\r') {
+    const onData = (buffer: Buffer) => {
+      const char = buffer.toString();
+      if (char === '\n' || char === '\r') {
         process.stdin.removeListener('data', onData);
         if (process.stdin.isTTY) {
           process.stdin.setRawMode(false);
@@ -34,16 +34,16 @@ export async function askMasked(question: string): Promise<string> {
         process.stdin.pause();
         process.stderr.write('\n');
         resolve(input.trim());
-      } else if (c === '\u007f' || c === '\b') {
+      } else if (char === '\u007f' || char === '\b') {
         if (input.length > 0) {
           input = input.slice(0, -1);
           process.stderr.write('\b \b');
         }
-      } else if (c === '\u0003') {
+      } else if (char === '\u0003') {
         // Ctrl+C
         process.exit(1);
       } else {
-        input += c;
+        input += char;
         process.stderr.write('*');
       }
     };
@@ -58,7 +58,7 @@ export async function confirm(question: string): Promise<boolean> {
 }
 
 export async function choose(question: string, options: string[]): Promise<string> {
-  const optionList = options.map((o, i) => `  ${i + 1}. ${o}`).join('\n');
+  const optionList = options.map((option, index) => `  ${index + 1}. ${option}`).join('\n');
   const answer = await ask(`${question}\n${optionList}\n> `);
 
   const index = parseInt(answer, 10) - 1;
@@ -67,6 +67,6 @@ export async function choose(question: string, options: string[]): Promise<strin
   }
 
   // Try matching by name
-  const match = options.find(o => o.toLowerCase().startsWith(answer));
+  const match = options.find(option => option.toLowerCase().startsWith(answer));
   return match || options[0];
 }

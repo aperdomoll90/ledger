@@ -62,7 +62,7 @@ export interface IHybridSearchProps {
   domain?: Domain;
   document_type?: string;
   project?: string;
-  rrf_k?: number;
+  reciprocalRankFusionK?: number;
 }
 
 export interface IRetrieveContextProps {
@@ -231,7 +231,7 @@ export async function searchHybrid(
     p_domain: props.domain ?? null,
     p_document_type: props.document_type ?? null,
     p_project: props.project ?? null,
-    p_rrf_k: props.rrf_k ?? 60,
+    p_rrf_k: props.reciprocalRankFusionK ?? 60,
   });
 
   if (error) throw new Error(`Hybrid search failed: ${error.message}`);

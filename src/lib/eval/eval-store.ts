@@ -10,7 +10,7 @@ import type { IEvalMetricsProps, ITestResultProps } from './eval.js';
 
 export interface IEvalConfigProps {
   threshold:        number;
-  rrf_k:            number;
+  reciprocalRankFusionK: number;
   embedding_model:  string;
   [key: string]:    unknown;
 }
@@ -55,21 +55,21 @@ export async function saveEvalRun(
     zero_result_rate:      metrics.zeroResultRate,
     avg_response_time_ms:  metrics.avgResponseTimeMs,
     results_by_tag:        metrics.tagStats,
-    missed_queries:        metrics.missed.map(r => ({
-      query:    r.testCase.query,
-      expected: r.testCase.expected_doc_ids,
-      got:      r.returnedIds,
+    missed_queries:        metrics.missed.map(missedResult => ({
+      query:    missedResult.testCase.query,
+      expected: missedResult.testCase.expected_doc_ids,
+      got:      missedResult.returnedIds,
     })),
-    per_query_results: results.map(r => ({
-      query:            r.testCase.query,
-      hit:              r.hit,
-      firstResultHit:   r.firstResultHit,
-      position:         r.position,
-      expectedFound:    r.expectedFound,
-      expectedTotal:    r.expectedTotal,
-      responseTimeMs:   r.responseTimeMs,
-      reciprocalRank:   r.reciprocalRank,
-      returnedIds:      r.returnedIds,
+    per_query_results: results.map(testResult => ({
+      query:            testResult.testCase.query,
+      hit:              testResult.hit,
+      firstResultHit:   testResult.firstResultHit,
+      position:         testResult.position,
+      expectedFound:    testResult.expectedFound,
+      expectedTotal:    testResult.expectedTotal,
+      responseTimeMs:   testResult.responseTimeMs,
+      reciprocalRank:   testResult.reciprocalRank,
+      returnedIds:      testResult.returnedIds,
     })),
   };
 

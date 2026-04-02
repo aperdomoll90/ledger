@@ -38,7 +38,7 @@ const sampleMetrics: IEvalMetricsProps = {
   recall: 75.0,
   zeroResultRate: 12.5,
   outOfScopeAccuracy: 100.0,
-  mrr: 0.75,
+  meanReciprocalRank: 0.75,
   tagStats: { search: { total: 4, hits: 3, firstHits: 2 } },
   missed: [],
 };
@@ -56,7 +56,7 @@ const sampleResult: ITestResultProps = {
   reciprocalRank: 1.0,
 };
 
-const sampleConfig = { threshold: 0.4, rrf_k: 60, embedding_model: 'text-embedding-3-small' };
+const sampleConfig = { threshold: 0.4, reciprocalRankFusionK: 60, embedding_model: 'text-embedding-3-small' };
 
 describe('saveEvalRun', () => {
   it('inserts row with correct metrics mapping and returns the new id', async () => {
@@ -97,7 +97,7 @@ describe('saveEvalRun', () => {
     const insertedRow = supabase._chain.insert.mock.calls[0][0];
     expect(insertedRow.results_by_tag).toEqual(sampleMetrics.tagStats);
     expect(insertedRow.missed_queries).toEqual(
-      sampleMetrics.missed.map(r => ({ query: r.testCase.query, expected: r.testCase.expected_doc_ids, got: r.returnedIds })),
+      sampleMetrics.missed.map(missedResult => ({ query: missedResult.testCase.query, expected: missedResult.testCase.expected_doc_ids, got: missedResult.returnedIds })),
     );
     expect(insertedRow.per_query_results).toHaveLength(1);
     expect(insertedRow.per_query_results[0]).toMatchObject({ query: sampleResult.testCase.query });

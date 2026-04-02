@@ -18,7 +18,7 @@ export interface RawCredentials {
 export interface ConnectResult {
   supabase: SupabaseClient;
   openai: OpenAI;
-  noteCount: number;
+  documentCount: number;
 }
 
 // --- Extracted helpers ---
@@ -133,19 +133,19 @@ export function readCredentials(): RawCredentials | null {
   return { supabaseUrl, supabaseKey, openaiKey };
 }
 
-/** Connect to Supabase + OpenAI, run migrations if needed. Returns clients + note count. */
+/** Connect to Supabase + OpenAI, run migrations if needed. Returns clients + document count. */
 export async function connectAndMigrate(creds: RawCredentials): Promise<ConnectResult> {
   // Verify Supabase connection
   console.error('Connecting to Supabase...');
   const supabase = createClient(creds.supabaseUrl, creds.supabaseKey);
 
   const { error: connError } = await supabase
-    .from('notes')
+    .from('documents')
     .select('id')
     .limit(1);
 
   const isNew = connError !== null;
-  if (isNew && !connError.message.includes('notes')) {
+  if (isNew && !connError.message.includes('documents')) {
     throw new Error(`Connection error: ${connError.message}`);
   }
   if (isNew) {
@@ -165,13 +165,13 @@ export async function connectAndMigrate(creds: RawCredentials): Promise<ConnectR
   }
 
   // Run migrations if new database
-  let noteCount = 0;
+  let documentCount = 0;
   if (isNew) {
     console.error('New database detected. Setting up schema...\n');
     const files = getMigrationFiles();
-    const allSql = files.map(f => {
-      const sql = readMigration(f);
-      return `-- ${f}\n${sql}`;
+    const allSql = files.map(file => {
+      const sql = readMigration(file);
+      return `-- ${file}\n${sql}`;
     }).join('\n\n');
 
     console.error('Run the following SQL in Supabase Dashboard > SQL Editor:\n');
@@ -182,24 +182,24 @@ export async function connectAndMigrate(creds: RawCredentials): Promise<ConnectR
     await ask('Press Enter after running the SQL...');
 
     const { error: verifyError } = await supabase
-      .from('notes')
+      .from('documents')
       .select('id')
       .limit(1);
 
     if (verifyError) {
-      throw new Error('Notes table not found. Make sure you ran all the SQL above.');
+      throw new Error('Documents table not found. Make sure you ran all the SQL above.');
     }
 
     console.error('Schema verified.\n');
   } else {
     const { count } = await supabase
-      .from('notes')
+      .from('documents')
       .select('*', { count: 'exact', head: true });
-    noteCount = count ?? 0;
-    console.error(`Found existing Ledger with ${noteCount} notes.\n`);
+    documentCount = count ?? 0;
+    console.error(`Found existing Ledger with ${documentCount} documents.\n`);
   }
 
-  return { supabase, openai, noteCount };
+  return { supabase, openai, documentCount };
 }
 
 // --- Standalone init command (delegates to helpers) ---
@@ -216,12 +216,10 @@ export async function init(): Promise<void> {
     process.exit(1);
   }
 
-  const wantBackup = await confirm('Enable daily local backup? (Saves all notes to ~/.ledger/backups/ at 1am)');
+  const wantBackup = await confirm('Enable daily local backup? (Saves all documents to ~/.ledger/backups/ at 1am)');
   if (wantBackup) {
     enableBackupCron();
   }
 
   console.error('\nInit complete.');
-  console.error('Run `ledger setup <platform>` to connect an agent.');
-  console.error('Platforms: claude-code, openclaw, chatgpt');
 }

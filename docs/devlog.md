@@ -1534,3 +1534,44 @@ Key findings: exact-term strong (100% hit), conceptual weak (77% hit, 31% first-
 3. Run eval against live Supabase to verify persistence + comparison
 4. Add RLS policies to `eval_runs` table
 5. Phase 4.5: Start tuning (reranker first, per reference doc priority order)
+
+---
+
+## Session 32 — 2026-04-02
+
+### Eval Hardening (Plan Executed — 5/5 Tasks Complete)
+- Task 1: Added MRR (Mean Reciprocal Rank) metric — `reciprocalRank` per test case, `meanReciprocalRank` in aggregate metrics
+- Task 2: Persistence layer — `saveEvalRun()` + `loadPreviousRun()` in `eval-store.ts`
+- Task 3: Auto-compare + regression detection — `compareRuns()` + `formatComparison()` with severity levels (ok/warning/block/critical), inverted metric handling
+- Task 4: Wired persistence + comparison into eval runner script
+- Task 5: Live verification — 2 runs against Supabase, comparison working, runs saved (id: 1, 2)
+- MRR baseline: **0.601** (right doc averages position ~1.7)
+
+### Variable Naming Cleanup
+- Created hookify rule: `descriptive-variable-names` — blocks single-letter variables AND 28 common abbreviations in .ts files
+- Fixed 20+ violations across 8 files (eval.ts, eval-store.ts, prompt.ts, migrate.ts, embeddings.ts, init.ts, backup.ts, eval-store.test.ts)
+- Renamed `mrr` → `meanReciprocalRank`, `rrf_k` → `reciprocalRankFusionK` across all files
+- Inlined unnecessary intermediate variable in MRR computation
+
+### CLI Modernization
+- Created `src/cli.ts` — clean entry point with 14 v2 commands (was only in dist/ as compiled JS)
+- Created `src/commands/eval.ts` — `ledger eval` and `ledger eval --dry-run`
+- Created `src/commands/add.ts` — `ledger add` using `createDocument()`
+- Rewrote `backup.ts`, `restore.ts`, `init.ts` — `from('notes')` → `from('documents')`
+- Renamed: `deleteNote()` → `removeDocument()`, `exportNote()` → `exportDocument()`, `ExitCode.NOTE_NOT_FOUND` → `DOCUMENT_NOT_FOUND`
+- Documented v1 onboarding flow in `docs/v1-onboarding-flow.md` before removing dead commands
+- Dropped 11 dead commands from CLI: pull, sync, add(v1), ingest, onboard, wizard, setup, config, backfill, migrate, hunt
+- Deleted subagent-created v1 stubs: pull.ts, backfill.ts, notes.d.ts, generators.d.ts, backfill.d.ts
+- Build verified: `npm run build` clean, `ledger --help` shows 14 commands
+
+### Reference Docs
+- Added "Building Your Eval System Step by Step" walkthrough to `reference-rag-evaluation.md`
+- All tables in eval reference visually aligned (28 tables)
+
+### Test Count: 125 (was 95 at session start)
+
+### Next Session
+1. Commit all session 32 changes
+2. Advanced eval metrics (Phase 4.6): NDCG@k, graded relevance, confidence intervals, score calibration, golden set coverage
+3. Add RLS policies to `eval_runs` table
+4. Phase 4.5: Start tuning (reranker first)

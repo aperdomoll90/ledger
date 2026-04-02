@@ -24,7 +24,7 @@ export async function push(config: LedgerConfig, filePath: string): Promise<void
   if (!existing) {
     fatal(
       `No Ledger document matching "${filename}" found. Add it via MCP first.`,
-      ExitCode.NOTE_NOT_FOUND,
+      ExitCode.DOCUMENT_NOT_FOUND,
     );
   }
 

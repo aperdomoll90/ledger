@@ -44,7 +44,7 @@ export interface IEvalMetricsProps {
   recall: number;
   zeroResultRate: number;
   outOfScopeAccuracy: number;
-  mrr: number;
+  meanReciprocalRank: number;
   tagStats: Record<string, { total: number; hits: number; firstHits: number }>;
   missed: ITestResultProps[];
 }
@@ -145,7 +145,7 @@ export function computeMetrics(results: ITestResultProps[]): IEvalMetricsProps {
     recall: totalExpected > 0 ? (totalFound / totalExpected) * 100 : 0,
     zeroResultRate: totalNormal > 0 ? (zeroResults / totalNormal) * 100 : 0,
     outOfScopeAccuracy: outOfScopeResults.length > 0 ? (outOfScopeCorrect / outOfScopeResults.length) * 100 : 0,
-    mrr: totalNormal > 0
+    meanReciprocalRank: totalNormal > 0
       ? normalResults.reduce((sum, result) => sum + result.reciprocalRank, 0) / totalNormal
       : 0,
     tagStats,
@@ -173,7 +173,7 @@ export function formatReport(metrics: IEvalMetricsProps): string {
   lines.push(`  Zero-result rate:      ${metrics.zeroResultRate.toFixed(1)}% (${metrics.zeroResults}/${metrics.normalCases} queries returned nothing)`);
   lines.push(`  Out-of-scope accuracy: ${metrics.outOfScopeAccuracy.toFixed(1)}% (${metrics.outOfScopeCorrect}/${metrics.outOfScopeCases} correctly returned nothing)`);
   lines.push(`  Avg response time:     ${metrics.avgResponseTimeMs.toFixed(0)}ms`);
-  lines.push(`  MRR:                   ${metrics.mrr.toFixed(3)} (1.0 = perfect ranking, 0.5 = avg position 2)`);
+  lines.push(`  MRR:                   ${metrics.meanReciprocalRank.toFixed(3)} (1.0 = perfect ranking, 0.5 = avg position 2)`);
   lines.push('');
 
   if (metrics.missed.length > 0) {
@@ -187,9 +187,9 @@ export function formatReport(metrics: IEvalMetricsProps): string {
   lines.push('BY TAG:');
   const sortedTags = Object.entries(metrics.tagStats).sort((entryA, entryB) => entryB[1].total - entryA[1].total);
   for (const [tag, stats] of sortedTags) {
-    const hitPct = ((stats.hits / stats.total) * 100).toFixed(0);
-    const firstPct = ((stats.firstHits / stats.total) * 100).toFixed(0);
-    lines.push(`  ${tag}: ${hitPct}% hit rate, ${firstPct}% first-result (${stats.total} queries)`);
+    const hitPercentage = ((stats.hits / stats.total) * 100).toFixed(0);
+    const firstResultPercentage = ((stats.firstHits / stats.total) * 100).toFixed(0);
+    lines.push(`  ${tag}: ${hitPercentage}% hit rate, ${firstResultPercentage}% first-result (${stats.total} queries)`);
   }
 
   lines.push('');
@@ -223,7 +223,7 @@ export interface IComparableMetricsProps {
   firstResultAccuracy: number;
   recall: number;
   zeroResultRate: number;
-  mrr: number;
+  meanReciprocalRank: number;
   avgResponseTimeMs: number;
 }
 
@@ -243,7 +243,7 @@ export function compareRuns(
     'firstResultAccuracy',
     'recall',
     'zeroResultRate',
-    'mrr',
+    'meanReciprocalRank',
     'avgResponseTimeMs',
   ];
 
@@ -316,7 +316,7 @@ function determineSeverity(
 const PERCENTAGE_METRICS = new Set(['hitRate', 'firstResultAccuracy', 'recall', 'zeroResultRate']);
 
 function formatMetricValue(metricKey: string, value: number): string {
-  if (metricKey === 'mrr') return value.toFixed(3);
+  if (metricKey === 'meanReciprocalRank') return value.toFixed(3);
   if (PERCENTAGE_METRICS.has(metricKey)) return `${value.toFixed(1)}%`;
   return value.toFixed(1);
 }

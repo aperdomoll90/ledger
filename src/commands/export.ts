@@ -4,7 +4,7 @@ import type { LedgerConfig } from '../lib/config.js';
 import { searchHybrid } from '../lib/search/ai-search.js';
 import { fatal, ExitCode } from '../lib/errors.js';
 
-export async function exportNote(
+export async function exportDocument(
   config: LedgerConfig,
   query: string,
   outputPath?: string,
@@ -15,7 +15,7 @@ export async function exportNote(
   );
 
   if (results.length === 0) {
-    fatal('No matching documents found.', ExitCode.NOTE_NOT_FOUND);
+    fatal('No matching documents found.', ExitCode.DOCUMENT_NOT_FOUND);
   }
 
   const document = results[0];

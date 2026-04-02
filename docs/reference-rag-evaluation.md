@@ -38,10 +38,16 @@
   - [Embedding Eval](#embedding-eval)
   - [Search Eval](#search-eval)
   - [Reranking Eval](#reranking-eval)
+- [Building Your Eval System Step by Step](#building-your-eval-system-step-by-step)
 - [Eval Runner Architecture](#eval-runner-architecture)
   - [Pure Computation Layer](#pure-computation-layer)
   - [Persistence Layer](#persistence-layer)
   - [Orchestration Layer](#orchestration-layer)
+- [Ledger Implementation](#ledger-implementation)
+  - [File Map](#file-map)
+  - [What Triggers It](#what-triggers-it)
+  - [End-to-End Flow](#end-to-end-flow)
+  - [Current Gaps](#current-gaps)
 - [Run Comparison and Regression Detection](#run-comparison-and-regression-detection)
   - [Auto-Compare](#auto-compare)
   - [Severity Levels](#severity-levels)
@@ -558,6 +564,85 @@ This is what the standard eval runner measures. Key levers:
 
 ---
 
+## Building Your Eval System Step by Step
+
+If you're starting from scratch or hardening an existing eval, build these pieces in order. Each step depends on the one before it.
+
+### Step 1: Metrics
+
+Before you can store or compare anything, you need to compute it. Define the scoring functions that take search results and produce numbers — hit rate, recall, MRR (Mean Reciprocal Rank), first-result accuracy, zero-result rate.
+
+These should be **pure functions** — no database, no API calls, just input and output. This makes them testable with unit tests and reusable by any consumer (script, CLI command, CI pipeline).
+
+**Why first:** Every later step stores, compares, or displays metrics. If metrics aren't defined yet, there's nothing to store or compare. If you add a metric *after* you start storing runs, the early runs won't have it and comparisons won't work cleanly.
+
+### Step 2: Persistence
+
+Right now your eval prints numbers to the terminal. Close the terminal, numbers are gone. Next week you run it again — you have no idea what last week's numbers were.
+
+Build two functions:
+- **Save** — after computing metrics, write them to a database table. Every run becomes a row: timestamp, config snapshot, metrics, per-query detail.
+- **Load** — fetch the most recent row. This is how you'll answer "what were the numbers last time?"
+
+Think of it like a test report that gets filed, not thrown away. You can go back to any previous run and see exactly what the scores were, what config was used, which queries failed.
+
+**Why second:** The next step (comparison) needs stored runs to compare against. Can't compare if there's nothing stored.
+
+### Step 3: Comparison and Regression Detection
+
+After every eval run, automatically answer: **"Did things get better or worse?"**
+
+Load the previous run (Step 2), diff every metric against the current run, and assign a severity:
+
+| Severity     | When                                             | What to do                   |
+|--------------|--------------------------------------------------|------------------------------|
+| **ok**       | All metrics stable or improved                   | Deploy confidently           |
+| **warning**  | Any metric dropped more than 2%                  | Investigate — might be noise |
+| **block**    | Any metric dropped more than 5%                  | Do NOT deploy — revert       |
+| **critical** | Hit rate below 80% or zero-result rate above 10% | Something is broken          |
+
+Watch out for **inverted metrics** — for most metrics higher is better (hit rate, recall, MRR). But for zero-result rate and response time, *lower* is better. A drop in zero-result rate is an improvement, not a regression. Your comparison function needs to know which direction is "good" for each metric.
+
+**Why third:** Depends on Step 2 — needs stored runs to compare against. But the comparison logic itself is pure computation (like Step 1), so it belongs in the same module as scoring and metrics.
+
+### Step 4: Integration
+
+Steps 1-3 built the pieces. Now connect them into your eval runner script.
+
+Before:
+1. Load golden dataset
+2. Run each query through search
+3. Score results
+4. Print report
+
+After:
+1. **Load previous run** (Step 2)
+2. Load golden dataset
+3. Run each query through search
+4. Score results (now includes all metrics from Step 1)
+5. Print report
+6. **Save run to database** (Step 2)
+7. **Compare against previous run and print diff** (Step 3)
+
+Your runner script should be thin orchestration — 50-80 lines that wire together the computation, persistence, and comparison modules. No business logic in the script itself.
+
+**Why fourth:** Can't wire things together until they exist.
+
+### Step 5: Live Verification
+
+Run the eval script against your real database and verify the full pipeline:
+- Run once → prints metrics, saves to database, reports "no previous run found"
+- Run again → prints metrics, saves a second run, shows comparison (all unchanged)
+- Check database → two rows with matching metrics
+
+**Why last:** Steps 1-4 were tested with mocked databases (fast, free, repeatable). Step 5 proves it works against the real database with real data. Unit tests catch logic bugs, live verification catches integration bugs.
+
+### The Pattern
+
+These 5 steps follow a common sequence: **data → storage → analysis → integration → verification**. Each layer builds on the previous one. You can't compare runs if you can't store them. You can't store useful runs if you're missing metrics. You can't trust the integration without testing it live.
+
+---
+
 ## Eval Runner Architecture
 
 Separate concerns into three layers:
@@ -635,6 +720,133 @@ The script that wires everything together. Should be ~50-80 lines:
 7. Compare against previous run
 8. Print comparison + severity
 ```
+
+---
+
+## Ledger Implementation
+
+How Ledger's eval system maps to the architecture above. This section documents what exists, what triggers it, and how data flows through the system.
+
+### File Map
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  src/scripts/eval-search.ts    ← orchestrator, the only │
+│  npx tsx src/scripts/eval-search.ts    file with I/O    │
+├─────────────────────────────────────────────────────────┤
+│  src/lib/eval/eval.ts          ← scoring + metrics      │
+│  src/lib/eval/eval-store.ts    ← save/load runs to DB   │
+├─────────────────────────────────────────────────────────┤
+│  src/lib/search/ai-search.ts   ← the actual search      │
+│  (searchHybrid)                  being evaluated         │
+└─────────────────────────────────────────────────────────┘
+```
+
+- **eval.ts** — pure functions, zero I/O. Types (`IGoldenTestCaseProps`, `ITestResultProps`, `IEvalMetricsProps`), scoring (`scoreTestCase`), aggregation (`computeMetrics`), formatting (`formatReport`). Fully unit-testable.
+- **eval-store.ts** — persistence layer. `saveEvalRun()` writes to `eval_runs`, `loadPreviousRun()` reads the most recent run.
+- **eval-search.ts** — orchestration script. Wires golden dataset loading, search execution, scoring, and persistence together.
+- **tests/eval.test.ts** — unit tests for scoring, metrics, and report formatting.
+- **tests/eval-store.test.ts** — unit tests for persistence (mocked Supabase).
+
+### What Triggers It
+
+Manual execution only:
+
+```bash
+npx tsx src/scripts/eval-search.ts
+```
+
+No CLI command, no cron, no CI integration. It's a developer tool invoked by hand.
+
+### End-to-End Flow
+
+**Step 1 — Load golden test cases from Supabase.**
+
+The script queries `eval_golden_dataset` (56 rows). Each row is a query + the doc IDs that should come back:
+
+```
+"how does auth work?"  →  expected: [42, 99]    tags: [conceptual]
+"pgvector HNSW"        →  expected: [137]        tags: [exact-term]
+"pizza recipes"        →  expected: []            tags: [out-of-scope]
+```
+
+These were manually inserted — no seed file in the repo. The table has a GIN index on `tags` for filtering.
+
+**Step 2 — For each test case, run an actual search.**
+
+The script calls `searchHybrid()` from `ai-search.ts` — the same function the MCP server uses in production. The eval tests the real search path:
+
+```
+Query: "how does auth work?"
+          │
+          ▼
+   getOrCacheQueryEmbedding()
+          │
+          ├─ Check query_cache table (by normalized text)
+          ├─ Cache hit → return cached 1536-dim vector
+          └─ Cache miss → call OpenAI text-embedding-3-small, cache result
+          │
+          ▼
+   supabase.rpc('match_documents_hybrid')
+          │
+          ├─ Vector path: cosine similarity against document_chunks.embedding
+          ├─ Keyword path: GIN full-text search against documents.search_vector
+          └─ RRF fusion: score = 1/(60 + vector_rank) + 1/(60 + keyword_rank)
+          │
+          ▼
+   Returns ISearchResultProps[] (top 10 by fused score)
+```
+
+Each search also fire-and-forget logs to `search_evaluations` — same as production. The eval adds no special instrumentation.
+
+**Step 3 — Score each result.**
+
+`scoreTestCase()` (in `eval.ts`) takes the golden test case + search results and computes:
+
+| Field             | What it captures                                           |
+|-------------------|------------------------------------------------------------|
+| `hit`             | Did any expected doc appear in results?                    |
+| `firstResultHit`  | Was the #1 result one of the expected docs?                |
+| `position`        | Where did the first expected doc appear? (null if missed)  |
+| `reciprocalRank`  | `1 / (position + 1)` — feeds into MRR                     |
+| `expectedFound`   | How many of the expected docs were found                   |
+| `expectedTotal`   | How many expected docs the test case has                   |
+
+For out-of-scope cases (empty `expected_doc_ids`), a "hit" means the search correctly returned nothing.
+
+**Step 4 — Aggregate.**
+
+`computeMetrics()` takes all scored results and produces:
+
+| Metric                | What it answers                                               |
+|-----------------------|---------------------------------------------------------------|
+| `hitRate`             | What % of queries found at least one right doc?               |
+| `firstResultAccuracy` | What % of queries had the right doc ranked #1?                |
+| `recall`              | Of all expected docs across all queries, what % found?        |
+| `mrr`                 | On average, how high is the first correct result ranked?      |
+| `zeroResultRate`      | How often does search return nothing at all?                  |
+| `outOfScopeAccuracy`  | How often do garbage queries correctly get no results?        |
+| `tagStats`            | All of the above, broken down by tag                          |
+| `missed`              | The actual test cases that failed (for debugging)             |
+
+**Step 5 — Persist + report.**
+
+- `eval-store.ts` saves the run to `eval_runs` (metrics + config snapshot as JSONB).
+- `formatReport()` outputs a human-readable table to stdout.
+
+### Current Gaps
+
+| Gap                          | Impact                                                                            |
+|------------------------------|-----------------------------------------------------------------------------------|
+| No baseline comparison       | `loadPreviousRun()` exists but the script doesn't show deltas between runs        |
+| No search mode selection     | Always runs hybrid — can't isolate vector-only or keyword-only weaknesses         |
+| No per-case timing isolation | `responseTimeMs` includes embedding cache lookup, making timing noisy across runs |
+| Golden set only in Supabase  | No local fixture — if the DB is down or data drifts, eval breaks silently         |
+| No NDCG                      | MRR only scores the first hit — doesn't penalize poor ranking of other results    |
+
+### Embedding Cache Coupling
+
+First run after a cache flush: 56 OpenAI API calls (~$0.01, ~3-5s extra latency). Subsequent runs: all cache hits, significantly faster. Timing metrics are not comparable across fresh vs. warm runs unless cache state is accounted for.
 
 ---
 
@@ -739,16 +951,60 @@ Production failures should become test cases:
 
 ### Database Schema
 
-Three tables support the eval system:
+Four tables support the eval system, organized into two independent subsystems:
 
-| Table                            | Purpose                               | Retention                    |
-|----------------------------------|---------------------------------------|------------------------------|
+| Table                            | Purpose                               | Retention                        |
+|----------------------------------|---------------------------------------|----------------------------------|
 | `search_evaluations`             | Raw search logs (every search)        | 30 days (aggregated then purged) |
-| `search_evaluation_aggregates`   | Daily summaries                       | Indefinite                   |
-| `eval_golden_dataset`            | Test cases                            | Indefinite (growing)         |
-| `eval_runs`                      | Stored eval results                   | Indefinite                   |
+| `search_evaluation_aggregates`   | Daily summaries                       | Indefinite                       |
+| `eval_golden_dataset`            | Test cases (the answer key)           | Indefinite (growing)             |
+| `eval_runs`                      | Stored eval results (the grade)       | Indefinite                       |
 
 See `reference-rag-database-schemas.md` for full CREATE TABLE SQL.
+
+#### Two subsystems
+
+**Subsystem 1 — Production monitoring (passive, automatic).** Records what happens in real searches. Has no concept of "correct" or "incorrect" — just raw data.
+
+- `search_evaluations` — one row per search, inserted silently on every search call (fire-and-forget). Stores the query text, search mode, returned doc IDs + scores, and latency. This is the raw flight recorder.
+- `search_evaluation_aggregates` — one row per day, created by a daily cron job that crunches the raw rows into totals: search count, avg latency, zero-result rate, breakdown by mode. Keeps trends queryable without unbounded table growth.
+
+```
+Every search ──► search_evaluations (raw, 50+ rows/day)
+                        │
+                  daily cron job
+                        │
+                        ▼
+              search_evaluation_aggregates (1 row/day)
+```
+
+**Subsystem 2 — Controlled evaluation (manual, on-demand).** Tests whether search results are *correct* by comparing against known-good answers.
+
+- `eval_golden_dataset` — the answer key. Hand-curated test cases: "if someone asks X, they should find documents Y." Does not grow automatically — new cases are added manually when new failure modes are discovered.
+- `eval_runs` — the graded exam. One row per eval execution, containing all metrics (hit rate, MRR, recall), the config snapshot (threshold, model, RRF k), and full per-query detail. The historical record of search quality over time.
+
+```
+eval_golden_dataset (test cases, static)
+        │
+  eval script runs each through search
+        │
+        ▼
+  score + aggregate
+        │
+        ▼
+  eval_runs (1 row per run, historical)
+```
+
+#### How they connect
+
+The two subsystems are independent but designed to feed each other:
+
+1. Spot a pattern in `search_evaluations` (e.g. a query that keeps returning zero results)
+2. Figure out what it *should* return
+3. Add it to `eval_golden_dataset`
+4. Next eval run catches it, `eval_runs` tracks whether it's fixed
+
+The first two tables record what *actually happens*. The last two test whether what happens is *correct*.
 
 ### Aggregation Pipeline
 

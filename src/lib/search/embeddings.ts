@@ -143,13 +143,13 @@ export function chunkText(
     } else {
       // Force split at character boundaries (step must be positive)
       const step = Math.max(1, maxChars - overlapChars);
-      for (let i = 0; i < chunk.length; i += step) {
+      for (let offset = 0; offset < chunk.length; offset += step) {
         result.push({
-          content: chunk.slice(i, i + maxChars),
+          content: chunk.slice(offset, offset + maxChars),
           chunk_index: finalIndex,
           content_type: 'text',
           strategy: 'forced',
-          overlap_chars: i > 0 ? overlapChars : 0,
+          overlap_chars: offset > 0 ? overlapChars : 0,
         });
         finalIndex++;
       }
