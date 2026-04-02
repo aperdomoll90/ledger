@@ -1,6 +1,6 @@
 import type { LedgerConfig } from '../lib/config.js';
-import { getDocumentById } from '../lib/document-fetching.js';
-import { deleteDocument } from '../lib/document-operations.js';
+import { getDocumentById } from '../lib/documents/fetching.js';
+import { deleteDocument } from '../lib/documents/operations.js';
 import { confirm } from '../lib/prompt.js';
 
 export async function deleteNote(

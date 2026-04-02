@@ -1483,3 +1483,54 @@ Key findings: exact-term strong (100% hit), conceptual weak (77% hit, 31% first-
 3. Create `reference-rag-setup-walkthrough.md` (zero to working RAG step-by-step)
 4. Upgrade eval runner to production-grade (save to eval_runs, auto-compare)
 5. Phase 4.5: Start tuning
+
+---
+
+## Session 31 — 2026-04-01/02
+
+### Lib Restructure
+- Reorganized `src/lib/` into subdirectories: `documents/`, `search/`, `eval/`
+- Moved 5 files, updated 17 import consumers (mcp-server, 8 commands, 6 tests, eval script)
+- Created `src/lib/eval/eval.ts` — extracted types (`IGoldenTestCaseProps`, `ITestResultProps`, `IEvalMetricsProps`), `scoreTestCase()`, `computeMetrics()`, `formatReport()` from eval-search.ts
+- Slimmed `eval-search.ts` from 221 → 80 lines (thin orchestration only)
+- Deleted orphaned `migrate-v2.ts` and stale `dist/_old_v1/`
+- All 95 tests pass, clean TypeScript compile
+
+### Eval Research & Planning
+- Researched production-grade RAG eval requirements against our own reference docs
+- Identified 7 infrastructure gaps (persist runs, auto-compare, regression detection, MRR, aggregation cron, feedback, feedback→golden set)
+- Wrote implementation plan: `docs/superpowers/plans/2026-04-01-eval-hardening.md` (5 tasks, 18 tests, TDD)
+
+### Schema Documentation
+- Created `docs/ledger-architecture-database-schemas.md` — complete ground-truth from live Supabase
+  - 13 tables with column tables + CREATE TABLE SQL + CHECK constraints
+  - 56 indexes (full CREATE INDEX statements)
+  - 17 functions (full SQL bodies from `pg_get_functiondef`)
+  - 7 extensions, 1 trigger (verified), RLS policies (all 14 tables), Realtime status
+  - Cron status (pg_cron not installed — 6 functions unscheduled)
+  - Active vs Unused table mapping
+- Found: `eval_runs` table missing RLS policies
+- Updated `docs/reference-rag-database-schemas.md` — fixed `document_purge` SQL, search eval index sort order, added Extensions/Realtime/Cron sections
+
+### RAG Eval Reference
+- Created `docs/reference-rag-evaluation.md` — complete generic eval reference (~930 lines)
+  - 9 retrieval metrics with formulas (Hit Rate, First-Result, MRR, Recall, Precision, NDCG, MAP, Zero-Result Rate, Latency)
+  - Generation metrics (Faithfulness, Answer Relevancy, LLM-as-Judge)
+  - Golden dataset design (9 query categories, building from zero, sizing, anti-patterns)
+  - Component-level eval (chunking, embedding, search, reranking)
+  - Eval runner architecture (3-layer separation)
+  - Regression detection, statistical significance
+  - A/B testing protocol, cost analysis, common pitfalls, tools comparison
+
+### Key Decisions
+- Subdirectories over flat lib — prevents boiling frog as Phase 4-5 adds more files
+- `logSearchEvaluation()` stays in `ai-search.ts` — avoids circular dependency
+- MRR added as ranking quality metric — captures position, not just presence
+- `computeMetrics()` and `formatReport()` separated — composable for eval_runs persistence
+
+### Next Session
+1. Commit all session 31 changes
+2. Execute eval hardening plan (5 tasks) — subagent-driven recommended
+3. Run eval against live Supabase to verify persistence + comparison
+4. Add RLS policies to `eval_runs` table
+5. Phase 4.5: Start tuning (reranker first, per reference doc priority order)

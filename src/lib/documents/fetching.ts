@@ -2,7 +2,7 @@
 // Read documents from the database. No writes, no search — just SELECT queries.
 // Every query filters deleted_at IS NULL so soft-deleted documents are invisible.
 
-import type { IDocumentProps, IListDocumentsProps, ISupabaseClientProps } from './document-classification.js';
+import type { IDocumentProps, IListDocumentsProps, ISupabaseClientProps } from './classification.js';
 
 /**
  * Get a single document by its database ID.

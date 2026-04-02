@@ -3,7 +3,7 @@
 // Each function calls a Postgres RPC function that does the actual search.
 // TypeScript's job: generate the query embedding, then call the right function.
 
-import type { Domain, Protection, DocumentStatus, ISupabaseClientProps, IClientsProps } from './document-classification.js';
+import type { Domain, Protection, DocumentStatus, ISupabaseClientProps, IClientsProps } from '../documents/classification.js';
 import { getOrCacheQueryEmbedding, toVectorString } from './embeddings.js';
 
 // =============================================================================

@@ -13,7 +13,7 @@ import type {
   IUpdateFieldsProps,
   IListDocumentsProps,
   IClientsProps,
-} from '../src/lib/document-classification.js';
+} from '../src/lib/documents/classification.js';
 
 describe('document-classification types', () => {
   it('IDocumentProps has all document table columns', () => {

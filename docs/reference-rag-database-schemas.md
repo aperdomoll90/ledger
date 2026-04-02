@@ -33,6 +33,9 @@
   - [Evaluation & Maintenance](#evaluation--maintenance)
 - [Triggers](#triggers)
 - [Row-Level Security](#row-level-security)
+- [Extensions](#extensions)
+- [Realtime](#realtime)
+- [Scheduled Jobs](#scheduled-jobs)
 
 ---
 
@@ -563,11 +566,11 @@ CREATE INDEX index_document_versions_document ON document_versions (document_id,
 ### search_evaluations
 
 ```sql
--- Analytics over time
-CREATE INDEX index_search_evaluations_created ON search_evaluations (created_at);
+-- Analytics over time (DESC for "most recent first" queries)
+CREATE INDEX index_search_evaluations_created ON search_evaluations (created_at DESC);
 
 -- Identify zero-result queries
-CREATE INDEX index_search_evaluations_no_results ON search_evaluations (created_at)
+CREATE INDEX index_search_evaluations_no_results ON search_evaluations (created_at DESC)
   WHERE result_count = 0;
 
 -- Find searches by feedback type
@@ -663,11 +666,13 @@ Hard-delete documents past grace period.
 
 ```sql
 CREATE OR REPLACE FUNCTION document_purge(
-  p_grace_period interval DEFAULT '30 days'
+  p_older_than interval DEFAULT '30 days'
 ) RETURNS int LANGUAGE plpgsql AS $$
 DECLARE v_count int;
 BEGIN
-  DELETE FROM documents WHERE deleted_at < now() - p_grace_period;
+  DELETE FROM documents
+  WHERE deleted_at IS NOT NULL
+    AND deleted_at < now() - p_older_than;
   GET DIAGNOSTICS v_count = ROW_COUNT;
   RETURN v_count;
 END;
@@ -960,3 +965,73 @@ CREATE POLICY "Users read permitted docs" ON documents
     )
   );
 ```
+
+---
+
+## Extensions
+
+Required Postgres extensions for a RAG system:
+
+| Extension    | Purpose                                         | Required? |
+|--------------|--------------------------------------------------|-----------|
+| `vector`     | pgvector — vector storage, HNSW indexes, cosine distance | Yes |
+| `pgcrypto`   | SHA-256 hashing (`digest()`) for content_hash, version snapshots | Yes |
+| `pgtap`      | Database unit testing framework (pgTAP)          | Recommended |
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pgtap;  -- for database tests
+```
+
+Additional extensions may be auto-enabled by your hosting platform (e.g. Supabase enables `pg_graphql`, `pg_stat_statements`, `uuid-ossp`, `supabase_vault`).
+
+---
+
+## Realtime
+
+If your database supports realtime subscriptions (e.g. Supabase Realtime), enable it on the `documents` table so clients can react to changes without polling:
+
+```sql
+-- Supabase: add documents to the realtime publication
+ALTER PUBLICATION supabase_realtime ADD TABLE documents;
+```
+
+Only enable on tables that need live updates. Chunks, audit, and eval tables don't need realtime — they're derived or append-only.
+
+---
+
+## Scheduled Jobs
+
+Maintenance functions need to run on a schedule. If your platform supports `pg_cron`:
+
+```sql
+-- Enable the extension
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Daily: aggregate raw search logs into daily summaries
+SELECT cron.schedule('aggregate-search-evals', '0 2 * * *',
+  $$SELECT aggregate_search_evaluations()$$);
+
+-- Daily: clean raw search logs older than 30 days (run AFTER aggregation)
+SELECT cron.schedule('cleanup-search-evals', '0 3 * * *',
+  $$SELECT cleanup_search_evaluations()$$);
+
+-- Daily: hard-delete soft-deleted documents past 30-day grace period
+SELECT cron.schedule('purge-deleted-docs', '0 4 * * *',
+  $$SELECT document_purge()$$);
+
+-- Weekly: remove stale cached query embeddings
+SELECT cron.schedule('cleanup-query-cache', '0 5 * * 0',
+  $$SELECT cleanup_query_cache()$$);
+
+-- Weekly: keep only last 10 versions per document
+SELECT cron.schedule('cleanup-doc-versions', '0 5 * * 0',
+  $$SELECT cleanup_document_versions()$$);
+
+-- Yearly: create next year's audit_log partition
+SELECT cron.schedule('create-audit-partition', '0 0 1 12 *',
+  $$SELECT create_audit_partition_if_needed()$$);
+```
+
+If `pg_cron` is not available, run these via external cron (e.g. `crontab`, GitHub Actions, or a scheduled script calling each function via your database client).

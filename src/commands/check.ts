@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { fetchSyncableDocuments } from '../lib/document-fetching.js';
+import { fetchSyncableDocuments } from '../lib/documents/fetching.js';
 import { contentHash } from '../lib/hash.js';
 
 export type FileState = 'clean' | 'modified' | 'upstream' | 'conflict' | 'unknown' | 'deleted';

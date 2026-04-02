@@ -3,7 +3,7 @@
 // The database can't call OpenAI or split text — that's TypeScript's job.
 
 import { createHash } from 'crypto';
-import type { ChunkStrategy, ChunkContentType, IOpenAIClientProps, ISupabaseClientProps } from './document-classification.js';
+import type { ChunkStrategy, ChunkContentType, IOpenAIClientProps, ISupabaseClientProps } from '../documents/classification.js';
 
 // =============================================================================
 // Chunk interface — what chunkText() returns

@@ -3,8 +3,8 @@
 // Each function prepares data (chunk, embed, hash) then calls a Postgres RPC function.
 // The database handles transactions (document + chunks + audit = atomic).
 
-import type { IClientsProps, ICreateDocumentProps, IUpdateDocumentProps, IUpdateFieldsProps } from './document-classification.js';
-import { contentHash, chunkText, generateEmbedding, toVectorString } from './embeddings.js';
+import type { IClientsProps, ICreateDocumentProps, IUpdateDocumentProps, IUpdateFieldsProps } from './classification.js';
+import { contentHash, chunkText, generateEmbedding, toVectorString } from '../search/embeddings.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
 

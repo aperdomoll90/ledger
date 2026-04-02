@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { execFileSync } from 'child_process';
 import type { LedgerConfig } from '../lib/config.js';
-import { searchHybrid } from '../lib/ai-search.js';
+import { searchHybrid } from '../lib/search/ai-search.js';
 import { fatal, ExitCode } from '../lib/errors.js';
 
 const VIEW_DIR = '/tmp/ledger-view';

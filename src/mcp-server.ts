@@ -10,10 +10,10 @@ import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { z } from 'zod';
 
-import type { IClientsProps } from './lib/document-classification.js';
-import { createDocument, updateDocument, updateDocumentFields, deleteDocument, restoreDocument } from './lib/document-operations.js';
-import { getDocumentById, listDocuments } from './lib/document-fetching.js';
-import { searchHybrid, searchByVector, searchByKeyword, retrieveContext } from './lib/ai-search.js';
+import type { IClientsProps } from './lib/documents/classification.js';
+import { createDocument, updateDocument, updateDocumentFields, deleteDocument, restoreDocument } from './lib/documents/operations.js';
+import { getDocumentById, listDocuments } from './lib/documents/fetching.js';
+import { searchHybrid, searchByVector, searchByKeyword, retrieveContext } from './lib/search/ai-search.js';
 
 // =============================================================================
 // Clients

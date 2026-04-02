@@ -4,7 +4,7 @@ import {
   getDocumentByName,
   listDocuments,
   fetchSyncableDocuments,
-} from '../src/lib/document-fetching.js';
+} from '../src/lib/documents/fetching.js';
 
 /**
  * Creates a mock Supabase client that simulates the chaining pattern:

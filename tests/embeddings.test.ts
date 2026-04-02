@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { contentHash, toVectorString, parseVector, chunkText } from '../src/lib/embeddings.js';
+import { contentHash, toVectorString, parseVector, chunkText } from '../src/lib/search/embeddings.js';
 
 describe('contentHash', () => {
   it('returns SHA-256', () => { expect(contentHash('hello')).toHaveLength(64); });

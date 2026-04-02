@@ -10,10 +10,10 @@ describe('mcp-server module', () => {
     const source = readFileSync(new URL('../src/mcp-server.ts', import.meta.url), 'utf-8');
 
     // Verify it imports from all 4 library modules
-    expect(source).toContain("from './lib/document-classification.js'");
-    expect(source).toContain("from './lib/document-operations.js'");
-    expect(source).toContain("from './lib/document-fetching.js'");
-    expect(source).toContain("from './lib/ai-search.js'");
+    expect(source).toContain("from './lib/documents/classification.js'");
+    expect(source).toContain("from './lib/documents/operations.js'");
+    expect(source).toContain("from './lib/documents/fetching.js'");
+    expect(source).toContain("from './lib/search/ai-search.js'");
   });
 
   it('registers all 16 tools (10 new + 6 deprecated)', async () => {

@@ -1,8 +1,8 @@
 import { readFileSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { listDocuments } from '../lib/document-fetching.js';
-import { updateDocument } from '../lib/document-operations.js';
+import { listDocuments } from '../lib/documents/fetching.js';
+import { updateDocument } from '../lib/documents/operations.js';
 import { fatal, ExitCode } from '../lib/errors.js';
 
 export async function push(config: LedgerConfig, filePath: string): Promise<void> {

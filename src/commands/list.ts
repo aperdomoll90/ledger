@@ -1,5 +1,5 @@
 import type { LedgerConfig } from '../lib/config.js';
-import { listDocuments } from '../lib/document-fetching.js';
+import { listDocuments } from '../lib/documents/fetching.js';
 
 export async function list(
   config: LedgerConfig,
