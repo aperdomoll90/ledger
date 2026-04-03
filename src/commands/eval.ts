@@ -14,6 +14,10 @@ export interface IEvalOptionsProps {
   dryRun: boolean;
 }
 
+export interface ISweepOptionsProps {
+  thresholds: string;
+}
+
 // Search config imported from eval-store.ts (single source of truth)
 
 // =============================================================================
@@ -119,4 +123,79 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
   }
 
   console.log('\n' + formatAdvancedReport(confidenceIntervals, scoreCalibration, coverageAnalysis));
+}
+
+// =============================================================================
+// Threshold sweep — test multiple thresholds to find optimal value
+// =============================================================================
+
+/**
+ * Run the golden dataset at multiple similarity thresholds and compare.
+ * Prints a table showing how each metric changes with the threshold.
+ *
+ * Usage: ledger eval:sweep
+ *        ledger eval:sweep --thresholds 0.15,0.20,0.25,0.30,0.35,0.40
+ */
+export async function sweepThreshold(config: LedgerConfig, options: ISweepOptionsProps): Promise<void> {
+  const clients: IClientsProps = {
+    supabase:     config.supabase,
+    openai:       config.openai,
+    cohereApiKey: config.cohereApiKey,
+  };
+
+  const thresholds = options.thresholds
+    .split(',')
+    .map(value => parseFloat(value.trim()))
+    .filter(value => !isNaN(value) && value > 0 && value < 1);
+
+  if (thresholds.length === 0) {
+    console.error('No valid thresholds provided. Use comma-separated values like: 0.15,0.20,0.25');
+    process.exit(1);
+  }
+
+  const { data: testCases, error } = await clients.supabase
+    .from('eval_golden_dataset')
+    .select('id, query, expected_doc_ids, tags')
+    .order('id');
+
+  if (error || !testCases) {
+    console.error('Failed to load golden dataset:', (error as { message: string } | null)?.message ?? 'no data');
+    process.exit(1);
+  }
+
+  const goldenCases = testCases as IGoldenTestCaseProps[];
+  const normalCount = goldenCases.filter(testCase => testCase.expected_doc_ids.length > 0).length;
+  console.log(`\nLoaded ${goldenCases.length} test cases (${normalCount} normal)\n`);
+
+  console.log('threshold | hit_rate | first_result | recall   | MRR    | NDCG   | avg_ms');
+  console.log('----------|----------|--------------|----------|--------|--------|-------');
+
+  for (const threshold of thresholds) {
+    const results: ITestResultProps[] = [];
+
+    for (const testCase of goldenCases) {
+      const startTime = Date.now();
+      const searchResults = await searchHybrid(clients, {
+        query: testCase.query,
+        limit: CURRENT_SEARCH_CONFIG.limit as number,
+        threshold,
+        reranker: CURRENT_SEARCH_CONFIG.reranker as 'none' | 'cohere',
+      });
+      results.push(scoreTestCase(testCase, searchResults, Date.now() - startTime));
+    }
+
+    const metrics = computeMetrics(results);
+    // metrics.hitRate etc are already percentages (0-100) from computeMetrics
+    console.log(
+      `${threshold.toFixed(2).padStart(9)} | ` +
+      `${metrics.hitRate.toFixed(1).padStart(6)}% | ` +
+      `${metrics.firstResultAccuracy.toFixed(1).padStart(10)}% | ` +
+      `${metrics.recall.toFixed(1).padStart(6)}% | ` +
+      `${metrics.meanReciprocalRank.toFixed(3).padStart(6)} | ` +
+      `${metrics.normalizedDiscountedCumulativeGain.toFixed(3).padStart(6)} | ` +
+      `${metrics.avgResponseTimeMs.toFixed(0).padStart(5)}`
+    );
+  }
+
+  console.log(`\nCurrent threshold: ${CURRENT_SEARCH_CONFIG.threshold}`);
 }

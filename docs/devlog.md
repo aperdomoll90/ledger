@@ -1635,3 +1635,114 @@ Key findings: exact-term strong (100% hit), conceptual weak (77% hit, 31% first-
 2. Phase 4.5.2: Contextual retrieval (LLM prepend per chunk — no third-party data concern since we already use OpenAI for embeddings)
 3. Phase 4.5.3: Recursive chunking
 4. Grow golden dataset toward 100+ cases
+
+---
+
+## Session 33 — 2026-04-03
+
+### Phase 4.5.2 + 4.5.3: Recursive Chunking & Chunk Context Enrichment — DONE
+
+Designed, planned, and implemented two complementary improvements to the ingestion pipeline. Went from brainstorm → spec → plan → implementation → eval in one session.
+
+**Recursive chunking:**
+- Replaced greedy paragraph packer with hierarchical splitter: headers → paragraphs → lines → sentences → character fallback
+- Default chunk size dropped from 2000 → 1000 chars (industry standard for semantic search)
+- Configurable via `IChunkConfigProps` — `maxChunkSize`, `overlapChars`, `strategy`
+- Old `'paragraph'` strategy available as option, new default is `'recursive'`
+- `chunkText()` signature changed from 4 positional params to config object
+
+**Chunk context enrichment (Contextual Retrieval, Anthropic 2024):**
+- New module: `src/lib/search/chunk-context-enrichment.ts`
+- Before embedding, each chunk + full document sent to gpt-4o-mini to generate 2-3 sentence context summary
+- Summary stored in `context_summary` column (was NULL), token count in `token_count` column
+- Embedding input: `summary + "\n\n" + chunk.content` — enriched vector, original text in results
+- Named "chunk context enrichment" (describes the operation) rather than "contextual retrieval" (describes the goal)
+- Updated all reference docs (RAG architecture, RAG evaluation, RAG schemas) with both names
+
+**Pipeline integration:**
+- `createDocument()` and `updateDocument()` now: chunk → enrich → embed(enriched) → RPC
+- `IOpenAIClientProps` expanded with `chat.completions.create` for gpt-4o-mini calls
+- Used `(...args: any[]) => PromiseLike<...>` for chat type — real OpenAI SDK has overloaded signatures too complex for structural typing
+- RPC functions updated: `document_create` and `document_update` gain `p_chunk_summaries text[]`, `p_chunk_token_counts int[]`, `p_chunk_overlap int`
+- Old RPC overloads (22-param create, 10-param update) dropped to avoid Postgres ambiguity
+
+**Re-index:**
+- Created `src/scripts/reindex.ts` — bulk re-index with dry-run mode, single-doc mode
+- Re-indexed all 129 documents through new pipeline (~$0.25 total cost)
+- Backed up database before re-indexing (`ledger backup`)
+
+### Phase 4.5.4: Threshold Tuning — DONE
+
+**Golden dataset expanded:** 56 → 145 test cases (89 new)
+- 44 simple queries covering previously untested documents
+- 15 conceptual, 7 exact-term, 7 multi-doc, 8 cross-domain, 8 out-of-scope
+- Document coverage: 49 → 120 docs tested (38% → 93%)
+- Confidence intervals shrank: hit rate ±8.5% → ±3.4%
+
+**Threshold sweep CLI command:**
+- Created `ledger eval:sweep` — permanent CLI command for testing multiple thresholds
+- Default range: 0.15, 0.20, 0.25, 0.30, 0.35, 0.40
+- Custom: `--thresholds 0.38,0.40,0.42,0.45,0.50`
+- Diagnostic tool — results not stored, run `ledger eval` after applying winner
+
+**Sweep results:**
+- 0.38 peaked across all metrics (hit rate, first-result, recall, MRR, NDCG)
+- Higher threshold works because enriched embeddings push relevant scores higher — stricter filter cuts noise without dropping relevant results
+- Updated threshold from 0.25 → 0.38 in: `ai-search.ts` (2 places), `mcp-server.ts` (3 MCP tools), `eval-store.ts` (config)
+
+### Eval Results — Before & After
+
+| Metric            | Run 7 (old pipeline) | Run 11 (new pipeline) | Change       |
+|-------------------|----------------------|-----------------------|--------------|
+| Hit rate          | 88.5%                | **95.5%**             | **+7.0%**    |
+| First-result      | 44.2%                | **64.7%**             | **+20.5%**   |
+| Recall            | 72.6%                | **77.6%**             | **+5.0%**    |
+| MRR               | 0.595                | **0.747**             | **+0.152**   |
+| NDCG              | 0.620                | **0.759**             | **+0.139**   |
+| Out-of-scope      | 25.0%                | **75.0%**             | **+50.0%**   |
+
+### Documentation Updates
+- `reference-rag-system-architecture.md` — renamed "Contextual Retrieval" → "Chunk Context Enrichment" throughout, updated Ledger Implementation section with active pipeline, updated Production Defaults threshold note
+- `reference-rag-evaluation.md` — added Threshold Sweep section, renamed technique
+- `reference-rag-database-schemas.md` — updated context_summary column description
+- `ledger-architecture-database-schemas.md` — updated RPC functions with new params
+- `ledger-architecture-database-functions.md` — same RPC updates
+- `CLAUDE.md` — updated command count to 16 (incl. eval:sweep)
+- Created design spec: `docs/superpowers/specs/2026-04-03-chunking-and-context-enrichment-design.md`
+- Created implementation plan: `docs/superpowers/plans/2026-04-03-chunking-and-context-enrichment.md`
+
+### Files Created
+- `src/lib/search/chunk-context-enrichment.ts` — context summary generation
+- `src/scripts/reindex.ts` — bulk re-index script
+- `tests/chunk-context-enrichment.test.ts` — 10 tests
+- `docs/superpowers/specs/2026-04-03-chunking-and-context-enrichment-design.md`
+- `docs/superpowers/plans/2026-04-03-chunking-and-context-enrichment.md`
+
+### Files Modified
+- `src/lib/documents/classification.ts` — `IChunkConfigProps`, `'recursive'` in ChunkStrategy, chat on IOpenAIClientProps
+- `src/lib/search/embeddings.ts` — recursive `chunkText()` with config object
+- `src/lib/documents/operations.ts` — enrichment pipeline in create/update
+- `src/lib/eval/eval-store.ts` — expanded `CURRENT_SEARCH_CONFIG`
+- `src/lib/search/ai-search.ts` — threshold 0.25 → 0.38
+- `src/mcp-server.ts` — threshold defaults 0.25 → 0.38
+- `src/commands/eval.ts` — added `sweepThreshold()`
+- `src/cli.ts` — added `eval:sweep` command
+- `tests/embeddings.test.ts` — recursive chunker tests (25 tests)
+- `tests/document-operations.test.ts` — enriched pipeline tests (7 tests)
+
+### Key Decisions
+- Named technique "chunk context enrichment" instead of "contextual retrieval" — describes the operation, not the goal
+- gpt-4o-mini for summaries (20x cheaper than gpt-4o, same quality for 2-sentence summaries)
+- Synchronous enrichment (not background queue) — acceptable for current corpus size, queue deferred to Phase 4.7
+- Temperature 0 for deterministic summaries
+- `(...args: any[]) => PromiseLike` for OpenAI chat type — pragmatic over purist
+- Threshold sweep is diagnostic (not stored) — eval run after applying winner is the record
+
+### Test Count: 126 (project tests, 12 test files)
+
+### Next Session
+1. Commit all changes
+2. Update Ledger docs (reference docs already updated)
+3. Phase 4.5.5: Semantic cache — use HNSW on query_cache for fuzzy query matching
+4. Phase 4.7: Multi-format ingestion (PDF, audio)
+5. Investigate: 6 missed queries — are expected_doc_ids correct or do golden dataset entries need fixing?

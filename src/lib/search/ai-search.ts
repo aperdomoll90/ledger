@@ -155,7 +155,7 @@ export async function searchByVector(
 
   const { data, error } = await clients.supabase.rpc('match_documents', {
     q_emb: toVectorString(queryEmbedding),
-    p_threshold: props.threshold ?? 0.25,
+    p_threshold: props.threshold ?? 0.38,
     p_max_results: props.limit ?? 10,
     p_domain: props.domain ?? null,
     p_document_type: props.document_type ?? null,
@@ -234,7 +234,7 @@ export async function searchHybrid(
   const { data, error } = await clients.supabase.rpc('match_documents_hybrid', {
     q_emb: toVectorString(queryEmbedding),
     q_text: props.query,
-    p_threshold: props.threshold ?? 0.25,
+    p_threshold: props.threshold ?? 0.38,
     p_max_results: requestLimit,
     p_domain: props.domain ?? null,
     p_document_type: props.document_type ?? null,

@@ -23,7 +23,7 @@ import { check } from './commands/check.js';
 import { backup, enableBackupCron, disableBackupCron } from './commands/backup.js';
 import { restore } from './commands/restore.js';
 import { lint } from './commands/lint.js';
-import { evalSearch } from './commands/eval.js';
+import { evalSearch, sweepThreshold } from './commands/eval.js';
 
 process.on('unhandledRejection', (rejection) => {
   console.error(rejection instanceof Error ? rejection.message : String(rejection));
@@ -152,6 +152,15 @@ program
   .action(async (options) => {
     const config = loadConfig();
     await evalSearch(config, { dryRun: options.dryRun ?? false });
+  });
+
+program
+  .command('eval:sweep')
+  .description('Test multiple similarity thresholds to find optimal value')
+  .option('--thresholds <values>', 'comma-separated thresholds to test', '0.15,0.20,0.25,0.30,0.35,0.40')
+  .action(async (options) => {
+    const config = loadConfig();
+    await sweepThreshold(config, { thresholds: options.thresholds });
   });
 
 // =============================================================================

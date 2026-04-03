@@ -533,6 +533,8 @@ Next eval run uses expanded dataset
 | Synthetic queries without review    | LLM-generated queries are often too clean or too weird                                | Human review every synthetic case                                                        |
 | Never updated                       | Corpus changes but test cases don't — testing against stale expectations              | Review after every major content change                                                  |
 | Testing with same data used to tune | Overfitting — eval says great, production says otherwise                              | Hold out 20% of cases for validation (never tune against them)                           |
+| Too few cases for the pipeline      | CIs too wide to detect real changes — a 5% improvement looks like noise              | 50 cases: ±8-13% CI. 100+: ±5-8%. 150+: ±3-6%. Scale to your precision needs           |
+| Written for old pipeline            | Cases designed for 2000-char chunks don't stress-test 1000-char chunks               | Review and expand after every chunking or enrichment change                              |
 
 ---
 
@@ -1343,6 +1345,30 @@ Ordered by typical impact (highest first):
 | RRF k                  | 20 vs 60 vs 100                          | Vector vs keyword weight         | Subtle                           |
 | Top-K                  | 5 vs 10 vs 20                            | Coverage vs noise                | More = more context              |
 | Chunk overlap          | 0% vs 10% vs 20%                        | Recall at boundaries             | Small effect                     |
+
+### Threshold Sweep
+
+A threshold sweep tests multiple similarity thresholds against the same golden dataset to find the optimal value. The threshold gates which chunks pass vector search before RRF fusion — too low lets noise through, too high drops relevant results.
+
+**How to run a sweep:**
+1. Pick 5-6 threshold values spanning a range (e.g., 0.15, 0.20, 0.25, 0.30, 0.35, 0.40)
+2. Run the full golden dataset at each threshold
+3. Compare hit rate, first-result accuracy, recall, MRR, and NDCG
+4. Pick the threshold that maximizes first-result accuracy and MRR without dropping hit rate
+
+**When to re-sweep:**
+- After changing chunking strategy or chunk size
+- After enabling/disabling chunk context enrichment
+- After changing the embedding model
+- After significantly growing the golden dataset
+
+A sweep is a diagnostic tool — it answers "which threshold is best right now" and the answer changes whenever the pipeline changes. Don't store sweep results; store the eval run after applying the winning threshold.
+
+**Two-pass sweep:** Start with a wide range (0.10–0.50 at 0.05 intervals) to find the general region. Then narrow in (e.g., 0.35–0.45 at 0.02 intervals) to find the exact peak. The peak is where hit rate and MRR are both maximized — after the peak, hit rate drops because relevant results get filtered out.
+
+**Threshold and enrichment are coupled.** After enabling chunk context enrichment, the optimal threshold shifts upward. Enriched embeddings push relevant chunk scores higher (the context summary adds dimensions aligned with queries), so a stricter threshold filters noise without dropping relevant results. In practice, the optimal threshold moved from 0.25 to 0.38 after enabling enrichment — a +20% improvement in first-result accuracy from threshold alone.
+
+**Threshold range depends on your embedding model.** There are no universal "standard thresholds." The right range depends on the model's similarity distribution, your chunk size, and whether you use enrichment. For `text-embedding-3-small` with 1000-char enriched chunks, the optimal range is 0.35–0.40. For the same model with 2000-char unenriched chunks, it was 0.20–0.25. Always sweep empirically rather than copying values from another system.
 
 ### Testing Protocol
 

@@ -105,7 +105,7 @@ server.tool(
   'Search documents by meaning and keywords (hybrid search). Combines vector similarity with full-text keyword matching. Documents found by both methods rank highest.',
   {
     query: z.string().describe('What to search for'),
-    threshold: z.coerce.number().min(0).max(1).default(0.25).describe('Minimum vector similarity score (0-1). Lower = more results, higher = stricter matching'),
+    threshold: z.coerce.number().min(0).max(1).default(0.38).describe('Minimum vector similarity score (0-1). Lower = more results, higher = stricter matching'),
     limit: z.coerce.number().min(1).max(50).default(10).describe('Max results to return'),
     domain: domainEnum.optional().describe('Filter by domain'),
     document_type: z.string().optional().describe('Filter by document type'),
@@ -328,7 +328,7 @@ server.tool(
   'Search by meaning only (vector similarity). Use when you want conceptual matches — "how does auth work" finds OAuth docs even without those exact words. Prefer search_documents for general use.',
   {
     query: z.string().describe('What to search for'),
-    threshold: z.coerce.number().min(0).max(1).default(0.25).describe('Minimum cosine similarity (0-1)'),
+    threshold: z.coerce.number().min(0).max(1).default(0.38).describe('Minimum cosine similarity (0-1)'),
     limit: z.coerce.number().min(1).max(50).default(10).describe('Max results'),
     domain: domainEnum.optional().describe('Filter by domain'),
     document_type: z.string().optional().describe('Filter by document type'),
@@ -453,7 +453,7 @@ server.tool(
   '[DEPRECATED — use search_documents] Search memories by meaning using semantic similarity.',
   {
     query: z.string().describe('What to search for'),
-    threshold: z.coerce.number().min(0).max(1).default(0.25).describe('Minimum vector similarity score'),
+    threshold: z.coerce.number().min(0).max(1).default(0.38).describe('Minimum vector similarity score'),
     limit: z.coerce.number().min(1).max(50).default(10).describe('Max results'),
     type: z.string().optional().describe('Filter by type (maps to document_type)'),
     project: z.string().optional().describe('Filter by project'),

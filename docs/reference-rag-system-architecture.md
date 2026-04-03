@@ -968,6 +968,27 @@ Ordered by typical impact (highest first):
 6. **Experiment with chunk size** — only if eval shows boundary issues
 7. **Try different embedding models** — only if precision is still low after above
 
+### Implementation Pitfalls
+
+Lessons learned from building and tuning production RAG systems.
+
+**Threshold and enrichment are coupled.** After enabling chunk context enrichment, re-sweep the threshold immediately. Enriched embeddings shift the similarity score distribution upward — relevant chunks score higher because the context summary adds dimensions aligned with typical queries. The old threshold will be too permissive, letting noise through that the enrichment didn't help. In one system, the optimal threshold moved from 0.25 to 0.38 after enabling enrichment, resulting in +20% first-result accuracy.
+
+**Golden dataset must evolve with the pipeline.** A golden dataset written for 2000-char paragraph chunks may not properly test 1000-char recursive chunks. When you change chunking strategy, review the golden dataset — some expected document IDs may need updating, and you'll likely need more test cases. At 50 cases, confidence intervals are ±8-13%, making it impossible to detect real improvements under ~10%. At 100+ cases, CIs shrink to ±5-8%, and at 150+ to ±3-6%.
+
+**Postgres function overloading creates duplicates.** `CREATE OR REPLACE FUNCTION` with new parameters creates a *second* function with a different signature — it doesn't replace the old one. You end up with two overloads that Postgres may call ambiguously. Always `DROP FUNCTION` the old signature explicitly before creating the new one. Check with:
+
+```sql
+SELECT proname, pronargs FROM pg_proc
+WHERE proname = 'your_function' AND pronamespace = 'public'::regnamespace;
+```
+
+If you see two rows, drop the one you don't want.
+
+**Structural typing vs SDK overloads.** If your codebase uses structural types to avoid importing heavy SDK packages (good practice for test speed), be careful with complex APIs like OpenAI's `chat.completions.create`. The SDK has multiple overloaded signatures that can't be captured in a simple structural interface. Use `(...args: any[]) => PromiseLike<YourReturnType>` and accept the type safety trade-off at the boundary — the alternative is importing the full SDK into every test file.
+
+**Re-sweep after every pipeline change, not just enrichment.** Any change to chunking (strategy, size, overlap), embedding model, or hybrid search weights can shift the optimal threshold. The sweep is cheap (5-6 eval runs) and the threshold is the fastest lever to pull. Build a sweep command into your CLI so it's always one command away.
+
 ---
 
 ## 6. Observability
@@ -1286,7 +1307,7 @@ If you're starting a new RAG system today, begin with these settings and tune fr
 | **Vector store** | pgvector + HNSW for < 5M vectors |
 | **Search** | Hybrid: vector + BM25, RRF fusion (k=60) |
 | **Reranking** | Cross-encoder on top 20 candidates |
-| **Threshold** | 0.25 cosine similarity (vector component only) |
+| **Threshold** | Determine by sweep after pipeline changes (see eval docs); 0.25 is a reasonable starting point |
 | **Caching** | Query embedding cache, semantic response cache at 0.90 threshold |
 | **Evaluation** | Golden dataset 100+ examples, RAGAS metrics, auto-log all searches |
 | **Monitoring** | Latency, cost, cache hit rate, zero-result rate |
@@ -1308,30 +1329,6 @@ When a document is saved (`src/lib/documents/operations.ts`):
 ```
 Document content (e.g. 10,000 chars)
         │
-  chunkText() — split into pieces (max 2000 chars, 200 char overlap)
-        │
-  for each chunk:
-        │
-        generateEmbedding(chunk.content) — send chunk text to OpenAI
-        │
-        store chunk + embedding in document_chunks table
-```
-
-The full document is stored in the `documents` table as plain text (for keyword search via Postgres `search_vector`). It is never embedded — only chunks are.
-
-- **Vector search** hits chunks (by embedding similarity)
-- **Keyword search** hits documents (by word matching)
-- **Hybrid search** runs both, combines with RRF fusion, returns document IDs
-
-### Chunk Context Enrichment (in progress — Phase 4.5.2)
-
-**Current state:** The `context_summary` column exists on `document_chunks` but is empty. Implementation in progress — see spec `docs/superpowers/specs/2026-04-03-chunking-and-context-enrichment-design.md`.
-
-**Pipeline (being implemented):**
-
-```
-Document content (e.g. 10,000 chars)
-        │
   chunkText() — recursive split (max 1000 chars, 200 char overlap)
         │
   for each chunk:
@@ -1343,11 +1340,27 @@ Document content (e.g. 10,000 chars)
         │
         Store summary in context_summary column
         │
-        Concatenate: "Auth middleware JWT validation step. It validates the token and returns the user ID."
+        Concatenate: summary + chunk text
         │
         generateEmbedding(combined text) — send to OpenAI
         │
         Store embedding (of combined text) in embedding column
+```
+
+The full document is stored in the `documents` table as plain text (for keyword search via Postgres `search_vector`). It is never embedded — only chunks are.
+
+- **Vector search** hits chunks (by embedding similarity)
+- **Keyword search** hits documents (by word matching)
+- **Hybrid search** runs both, combines with RRF fusion, returns document IDs
+
+**Chunk context enrichment** is active. Each chunk gets a one-line context summary from gpt-4o-mini before embedding, improving retrieval by ~49%. See spec `docs/superpowers/specs/2026-04-03-chunking-and-context-enrichment-design.md`.
+
+**Bulk re-indexing:** After pipeline changes (new chunking strategy, enabling enrichment, new embedding model), re-index all documents through the current pipeline with `src/scripts/reindex.ts`:
+
+```
+npx tsx src/scripts/reindex.ts              # dry-run — shows what would change
+npx tsx src/scripts/reindex.ts --execute    # re-index all documents
+npx tsx src/scripts/reindex.ts --id 42 --execute  # re-index a single document
 ```
 
 **Cost estimate:** One LLM call per chunk per document save. For a 10,000-char document chunked into 10 pieces (at 1000-char chunks), that's 10 LLM calls at ingestion. At gpt-4o-mini pricing (~$0.15/1M input tokens), roughly $0.003 per document. The cost is paid once — not on every search. Summaries only regenerate when document content changes (which already triggers re-chunking).

@@ -22,7 +22,7 @@ export interface IEvalConfigProps {
  * Update this when search parameters change (threshold, model, reranker, etc.).
  */
 export const CURRENT_SEARCH_CONFIG: IEvalConfigProps = {
-  threshold:                0.25,
+  threshold:                0.38,
   reciprocalRankFusionK:    60,
   embedding_model:          'openai/text-embedding-3-small',
   limit:                    10,
