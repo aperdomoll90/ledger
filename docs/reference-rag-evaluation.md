@@ -48,10 +48,15 @@
   - [What Triggers It](#what-triggers-it)
   - [End-to-End Flow](#end-to-end-flow)
   - [Current Gaps](#current-gaps)
+  - [Using Eval to Tune Search](#using-eval-to-tune-search)
 - [Run Comparison and Regression Detection](#run-comparison-and-regression-detection)
   - [Auto-Compare](#auto-compare)
   - [Severity Levels](#severity-levels)
   - [Statistical Significance](#statistical-significance)
+- [Advanced Analysis](#advanced-analysis)
+  - [Confidence Intervals (Bootstrap)](#confidence-intervals-bootstrap)
+  - [Score Calibration](#score-calibration)
+  - [Coverage Analysis](#coverage-analysis)
 - [Feedback Systems](#feedback-systems)
   - [Explicit Feedback](#explicit-feedback)
   - [Implicit Signals](#implicit-signals)
@@ -242,19 +247,50 @@ precision = relevant_results_returned / total_results_returned × 100
 
 ### Normalized Discounted Cumulative Gain (NDCG)
 
-**What:** Measures ranking quality with graded relevance (not just relevant/irrelevant). Documents at higher positions contribute more to the score.
+**What:** Measures ranking quality across *all* result positions. Unlike MRR (which only cares about the first correct result), NDCG penalizes systems that find the right documents but rank them poorly.
 
 **Formula:**
 
 ```
-DCG  = Σ (relevance_i / log2(position_i + 1))    for each result
-IDCG = DCG of the ideal ranking (most relevant first)
-NDCG = DCG / IDCG
+DCG  = Σ (relevance_i / log2(position_i + 2))    for each result (0-indexed)
+IDCG = DCG of the ideal ranking (all relevant docs first)
+NDCG = DCG / IDCG                                (0 to 1 scale)
 ```
 
-**When it matters:** When you have graded relevance (highly relevant, somewhat relevant, marginally relevant) rather than binary (relevant/not). More common in web search than RAG systems.
+The `log2(position + 2)` is the "discount" — results lower in the list contribute less to the score. Position is 0-indexed, so we add 2 to avoid `log2(1) = 0`.
 
-**For most RAG systems:** MRR is simpler and sufficient. Use NDCG only if you need graded relevance scoring.
+**Example — why NDCG catches what MRR misses:**
+
+A query expects docs [5, 10, 15]. Search returns them at positions 1, 8, 9.
+
+| Metric | Score  | What it tells you                                       |
+|--------|--------|---------------------------------------------------------|
+| MRR    | 1.0    | "Perfect" — doc 5 was at position 1                     |
+| NDCG   | ~0.65  | "Not great" — docs 10 and 15 were buried at positions 8-9 |
+
+MRR says everything is fine because it only checks the first hit. NDCG reveals that the other relevant documents are poorly ranked — an agent using multiple results would get bad context.
+
+**Binary vs graded relevance:**
+
+NDCG works with both:
+
+| Relevance model | How it works                                                  | When to use                       |
+|-----------------|---------------------------------------------------------------|-----------------------------------|
+| **Binary**      | Relevance = 1 if doc is in expected list, 0 otherwise         | Most RAG systems, golden datasets with expected_doc_ids |
+| **Graded**      | Relevance = 0 (irrelevant), 1 (related), 2 (exact match)     | When you can distinguish "close" from "perfect" answers |
+
+Binary NDCG is valuable even without graded relevance — it catches multi-document ranking issues that MRR misses entirely. Start with binary, upgrade to graded when your golden dataset supports it.
+
+**Interpretation:**
+
+| NDCG    | Meaning                                                     |
+|---------|-------------------------------------------------------------|
+| 1.0     | Perfect — all relevant docs ranked at the top               |
+| 0.8+    | Good — relevant docs mostly near the top                    |
+| 0.5-0.8 | Fair — relevant docs found but some ranked poorly           |
+| < 0.5   | Poor — relevant docs consistently buried in results         |
+
+**When it matters:** Always for multi-document queries (queries expecting 2+ results). For single-document queries, NDCG equals MRR. If most of your queries expect a single document, MRR is sufficient and NDCG adds little. If you have multi-document queries, add NDCG.
 
 ---
 
@@ -317,15 +353,16 @@ zero_result_rate = queries_with_zero_results / total_queries × 100
 
 Not every metric matters for every system. Choose based on how your system is used:
 
-| System type                           | Primary metrics                    | Secondary               |
-|---------------------------------------|------------------------------------|-------------------------|
-| **Agent reads top result only**       | First-result accuracy, MRR         | Hit rate, latency       |
-| **Agent reads top 3-5 results**       | Hit rate, MRR, recall              | Precision, latency      |
-| **Agent uses all results as context** | Recall, zero-result rate           | Precision, latency      |
-| **User browses results**              | MRR, NDCG                         | Precision, recall       |
-| **Generation pipeline (RAG + LLM)**  | Faithfulness, answer relevancy     | All retrieval metrics   |
+| System type                           | Primary metrics                    | Secondary                |
+|---------------------------------------|------------------------------------|--------------------------|
+| **Agent reads top result only**       | First-result accuracy, MRR         | Hit rate, latency        |
+| **Agent reads top 3-5 results**       | Hit rate, MRR, NDCG, recall        | Precision, latency       |
+| **Agent uses all results as context** | Recall, NDCG, zero-result rate     | Precision, latency       |
+| **User browses results**              | MRR, NDCG                          | Precision, recall        |
+| **Generation pipeline (RAG + LLM)**   | Faithfulness, answer relevancy     | All retrieval metrics    |
+| **Multi-doc queries common**          | NDCG, recall                       | MRR, hit rate            |
 
-**Start with:** Hit rate + first-result accuracy + recall + MRR + zero-result rate. Add others as needed.
+**Start with:** Hit rate + first-result accuracy + recall + MRR + zero-result rate. Add NDCG when you have multi-document queries. Add confidence intervals when you need to know if metric changes are real.
 
 ---
 
@@ -844,6 +881,68 @@ For out-of-scope cases (empty `expected_doc_ids`), a "hit" means the search corr
 | Golden set only in Supabase  | No local fixture — if the DB is down or data drifts, eval breaks silently         |
 | No NDCG                      | MRR only scores the first hit — doesn't penalize poor ranking of other results    |
 
+### Using Eval to Tune Search
+
+The eval system doesn't tune anything automatically. It provides the feedback loop that makes tuning informed instead of blind.
+
+**Without eval:** "I changed the similarity threshold from 0.25 to 0.3... I think search is better now?"
+
+**With eval:** "Threshold 0.25 → hit rate 88.5%, MRR 0.65. Threshold 0.3 → hit rate 82%, MRR 0.71. Losing hits but ranking improves. Wrong tradeoff — revert."
+
+#### What you can tune and what to watch
+
+| Knob                                       | Metrics that reveal impact                  |
+|--------------------------------------------|---------------------------------------------|
+| Similarity threshold (0.25)                | Hit rate, zero-result rate                  |
+| RRF k value (60)                           | MRR, first-result accuracy                  |
+| Chunk size (2000 chars)                    | Recall, hit rate                            |
+| Chunk overlap (200 chars)                  | Recall (especially multi-doc queries)       |
+| Embedding model (text-embedding-3-small)   | Everything — the biggest lever              |
+| Search mode (hybrid/vector/keyword)        | Per-tag stats show which mode wins where    |
+
+**Similarity threshold** — how picky search is. Higher = fewer results but more relevant. Lower = more results but some garbage. If you're getting too many empty searches, lower it. If you're getting junk results, raise it. Tune by adjusting the `threshold` parameter in search calls (currently 0.25).
+
+**RRF k value** — controls how much being #1 matters vs #5 in the ranking. Low k = #1 result dominates. High k = top 5 are treated more equally. Affects which doc lands on top, not whether it shows up at all. Tune by adjusting `rrf_k` in hybrid search calls (currently 60).
+
+**Chunk size** — how big the pieces are when a document gets sliced up for search. Too big and the important part gets buried in surrounding text. Too small and context gets lost. If search can't find docs you know are there, try different sizes. Tune by adjusting `DEFAULT_MAX_CHUNK_CHARS` in `src/lib/search/embeddings.ts` (currently 2000). Requires re-chunking and re-embedding all documents.
+
+**Chunk overlap** — how much neighboring chunks share at their edges. Without it, a key sentence can get split between two chunks and neither matches well. More overlap = fewer missed splits, but more data to store. Tune by adjusting `DEFAULT_OVERLAP_CHARS` in `src/lib/search/embeddings.ts` (currently 200). Requires re-chunking and re-embedding all documents.
+
+**Embedding model** — the thing that turns text into numbers so search can compare meaning. Better model = better everything. But changing it means re-processing every document in the database. Expensive, high effort, highest payoff. Tune by changing `EMBEDDING_MODEL` in `src/lib/search/embeddings.ts` (currently `text-embedding-3-small`). Requires re-embedding all documents and chunks.
+
+**Search mode** — vector finds meaning ("how does auth work?"), keyword finds exact words ("pgvector HNSW"). Hybrid runs both. The per-tag stats show you which mode actually helps for which kind of query. Tune by choosing which search function to call: `searchByVector`, `searchByKeyword`, or `searchHybrid` in `src/lib/search/ai-search.ts`.
+
+#### The tuning cycle
+
+```
+Change something (e.g. chunk size 2000 → 1500)
+        │
+        ▼
+Run eval (npx tsx src/scripts/eval-search.ts)
+        │
+        ▼
+Compare against previous run in eval_runs
+        │
+        ▼
+Numbers went up? Keep the change.
+Numbers went down? Revert.
+Numbers mixed? Check per-tag breakdown to understand why.
+```
+
+Every run is saved with its config snapshot (`eval_runs.config` JSONB), so you can look back and determine which combination of settings produced the best results.
+
+#### Reading the metrics together
+
+No single metric tells the full story. Read them as a group:
+
+| Scenario                                    | What it means                                              |
+|---------------------------------------------|------------------------------------------------------------|
+| Hit rate high, first-result accuracy low     | Finding the right docs but ranking them poorly             |
+| Hit rate high, recall low                    | Finding one expected doc but missing the rest              |
+| MRR high, hit rate low                       | When we find something, it ranks well — but we miss often  |
+| Zero-result rate climbing                    | Threshold too aggressive, or new query patterns unhandled  |
+| One tag underperforming                      | That category needs more golden test cases or tuning       |
+
 ### Embedding Cache Coupling
 
 First run after a cache flush: 56 OpenAI API calls (~$0.01, ~3-5s extra latency). Subsequent runs: all cache hits, significantly faster. Timing metrics are not comparable across fresh vs. warm runs unless cache state is accounted for.
@@ -894,7 +993,134 @@ With small golden datasets (< 100 cases), random variation can produce 2-3% swin
 | 100-200 cases       | > 2% change           |
 | 200+ cases          | > 1% change           |
 
-**If you need formal testing:** Bootstrap confidence intervals — resample your test cases with replacement 1000 times, compute metrics on each resample, check if the confidence intervals of two runs overlap. If they don't overlap, the difference is real.
+**If you need formal testing:** Bootstrap confidence intervals (see below).
+
+---
+
+## Advanced Analysis
+
+Three analysis tools that go beyond metrics — they help you understand *why* results are the way they are and *where* to improve.
+
+### Confidence Intervals (Bootstrap)
+
+**What it is:** A range around each metric that tells you how much uncertainty there is due to the limited size of your golden dataset. "Hit rate is 88.5% ± 4.2%" means the true value is somewhere between 84.3% and 92.7% with 95% probability.
+
+**Why it matters:** Without confidence intervals, you can't tell if a 2% metric change is real or random noise from a small dataset. The intervals quantify this — if two runs' intervals overlap, the difference isn't statistically meaningful.
+
+**How bootstrap resampling works:**
+
+```
+1. Take your N test results
+2. Randomly pick N results WITH REPLACEMENT (same result can be picked twice)
+3. Compute metrics on this resampled set
+4. Repeat 1000 times
+5. Sort the 1000 metric values
+6. The 2.5th percentile = lower bound, 97.5th percentile = upper bound
+7. That's your 95% confidence interval
+```
+
+"With replacement" means each resample is slightly different — some test cases appear twice, others are missing. This simulates "what if our golden dataset were different?" and shows how sensitive the metrics are to the specific test cases we chose.
+
+**How to read the output:**
+
+```
+Hit rate:              88.5% (±4.2%, 95% CI: 84.3–92.7%)
+First-result accuracy: 46.2% (±6.8%, 95% CI: 39.4–53.0%)
+MRR:                   0.601 (±0.052, 95% CI: 0.549–0.653)
+```
+
+The `±` value is half the interval width. Wide intervals (±5%+) mean your dataset is too small for precise measurement at that level. Narrow intervals (±1-2%) mean the metric is reliable.
+
+**When to act on a metric change:**
+
+| Previous run interval | Current run value | Conclusion                        |
+|-----------------------|-------------------|-----------------------------------|
+| 85.0–92.0%            | 90.0%             | Within interval — no real change  |
+| 85.0–92.0%            | 80.0%             | Below interval — real regression  |
+| 85.0–92.0%            | 95.0%             | Above interval — real improvement |
+
+**Implementation notes:**
+- 1000 iterations is standard — more is slower with diminishing returns
+- Bootstrap assumes test cases are independent (each query doesn't affect others)
+- Works with any sample size, but intervals are wider with fewer cases
+- Deterministic seed optional — use for reproducible CI in automated pipelines
+
+### Score Calibration
+
+**What it is:** Analysis of how similarity scores are distributed for relevant vs irrelevant results. Answers: "are scores meaningful, or is everything scoring about the same?"
+
+**What good calibration looks like:**
+
+```
+Relevant scores:    mean=0.82, range=[0.65–0.95]    ← high
+Irrelevant scores:  mean=0.35, range=[0.10–0.55]    ← low
+Score separation:   0.47                             ← big gap = good
+```
+
+There's a clear gap between relevant and irrelevant scores. A threshold anywhere from 0.55 to 0.65 would cleanly separate them.
+
+**What bad calibration looks like:**
+
+```
+Relevant scores:    mean=0.52, range=[0.30–0.70]    ← overlaps with irrelevant
+Irrelevant scores:  mean=0.45, range=[0.25–0.65]    ← overlaps with relevant
+Score separation:   0.07                             ← tiny gap = bad
+```
+
+Scores overlap — the system can't distinguish relevant from irrelevant by score alone. This means threshold tuning won't help much; the problem is in the embeddings or chunking.
+
+**Key metrics:**
+
+| Metric          | What it tells you                                          | What to do if bad                    |
+|-----------------|------------------------------------------------------------|--------------------------------------|
+| **Separation**  | Gap between relevant mean and irrelevant mean              | Low: improve embeddings or chunking  |
+| **Overlap**     | Do the score ranges overlap?                               | Yes: threshold can't cleanly split   |
+| **Relevant min** | Lowest score of a relevant result                         | Very low: some relevant docs have weak embeddings |
+| **Irrelevant max** | Highest score of an irrelevant result                  | Very high: some irrelevant docs are confusingly similar |
+
+**When to use:** Before threshold tuning. If separation is low, adjusting the threshold won't help — the problem is upstream (embeddings, chunking, or document content). If separation is high, threshold tuning is the right lever.
+
+### Coverage Analysis
+
+**What it is:** Shows which parts of your knowledge base are well-tested by the golden dataset and which are blind spots.
+
+**What it reports:**
+
+| Metric                   | What it tells you                                           |
+|--------------------------|-------------------------------------------------------------|
+| **Queries per tag**      | Which query categories have enough test cases (5+ = good)   |
+| **Unique docs tested**   | How many distinct documents appear in expected_doc_ids       |
+| **Undertested tags**     | Tags with fewer than 3 test cases — results for these are unreliable |
+| **Out-of-scope count**   | How many negative test cases you have (5-10% is good)        |
+
+**Example output:**
+
+```
+COVERAGE ANALYSIS:
+  Total queries:         56 (52 normal, 4 out-of-scope)
+  Unique docs tested:    38 of ~130 (29%)
+  Tags covered:          10
+
+    simple: 19 queries
+    conceptual: 13 queries
+    exact-term: 10 queries
+    technical: 9 queries
+    persona: 8 queries
+    multi-doc: 6 queries
+    atelier: 5 queries
+    cross-domain: 4 queries
+    workspace: 3 queries
+    security: 2 queries       ← undertested
+    custom-skills: 1 queries  ← undertested
+```
+
+**What to do with coverage gaps:**
+- Tags with < 3 queries: add more test cases for those categories
+- Documents never tested: write queries that should find them
+- High % of docs untested: grow the golden dataset (target 1-2 queries per document)
+- Few out-of-scope cases: add queries that should return nothing (5-10% of total)
+
+**When to use:** Monthly, when growing the golden dataset. Coverage analysis tells you *where* to add test cases, not just *how many*.
 
 ---
 

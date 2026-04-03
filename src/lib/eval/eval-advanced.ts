@@ -322,8 +322,8 @@ export function formatAdvancedReport(
   lines.push('');
 
   function formatPercentInterval(interval: IConfidenceIntervalProps): string {
-    const intervalWidth = (interval.width / 2) * 100;
-    return `${(interval.point * 100).toFixed(1)}% (±${intervalWidth.toFixed(1)}%, 95% CI: ${(interval.lower * 100).toFixed(1)}–${(interval.upper * 100).toFixed(1)}%)`;
+    const halfWidth = interval.width / 2;
+    return `${interval.point.toFixed(1)}% (±${halfWidth.toFixed(1)}%, 95% CI: ${interval.lower.toFixed(1)}–${interval.upper.toFixed(1)}%)`;
   }
 
   function formatRatioInterval(interval: IConfidenceIntervalProps): string {

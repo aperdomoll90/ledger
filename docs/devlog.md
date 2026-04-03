@@ -1575,3 +1575,36 @@ Key findings: exact-term strong (100% hit), conceptual weak (77% hit, 31% first-
 2. Advanced eval metrics (Phase 4.6): NDCG@k, graded relevance, confidence intervals, score calibration, golden set coverage
 3. Add RLS policies to `eval_runs` table
 4. Phase 4.5: Start tuning (reranker first)
+
+---
+
+## Session 32 (continued) — 2026-04-02
+
+### Phase 4.6: Advanced Eval Metrics — Complete (6/6 Tasks)
+- Task 1: Added NDCG (Normalized Discounted Cumulative Gain) — scores all result positions, not just first hit. Computed per-query in `scoreTestCase`, averaged in `computeMetrics`, added to comparison + report
+- Task 2: Confidence intervals via bootstrap resampling — 1000-iteration resample, 95% CI for all 6 metrics. New file `eval-advanced.ts`
+- Task 3: Score calibration — separates scores into relevant vs irrelevant buckets, computes distribution stats + separation gap
+- Task 4: Coverage analysis — queries per tag, unique docs tested, undertested tag detection (< 3 queries)
+- Task 5: `formatAdvancedReport()` — produces human-readable Advanced Analysis section. Wired into both `eval-search.ts` script and `eval.ts` CLI command
+- Task 6: Live verification — 4 eval runs stored in Supabase, all metrics computing correctly
+- Fixed confidence interval formatting bug (was multiplying already-percentage values by 100)
+- Renamed `ndcgAtK` → `normalizedDiscountedCumulativeGain` across all files (per naming conventions)
+
+### Key Findings from Live Eval Data
+- NDCG: 0.623 (slightly higher than MRR 0.598 — multi-doc queries get partial credit)
+- Confidence intervals: hit rate 88.5% ±8.7% — changes under ~9% could be noise with 56 cases
+- Score calibration: separation only 0.004 — RRF scores don't cleanly separate relevant/irrelevant. Threshold tuning won't help; reranker is the right lever
+- Coverage: 49 unique docs tested out of ~130 (38%), 8 tags undertested
+
+### Reference Doc Updates
+- Rewrote NDCG section in `reference-rag-evaluation.md` — binary vs graded relevance, concrete examples
+- Updated metric selection table — added NDCG to multi-result agent rows
+- Added new "Advanced Analysis" section — confidence intervals (bootstrap), score calibration, coverage analysis
+
+### Test Count: 145 (was 125 at start of 4.6)
+
+### Next Session
+1. Commit all Phase 4.6 changes
+2. Update Ledger architecture docs (typescript module map, RAG features)
+3. Add RLS policies to `eval_runs` table
+4. Phase 4.5: Start tuning (reranker first — score calibration confirms this is the right lever)

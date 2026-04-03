@@ -158,10 +158,10 @@ describe('formatReport — MRR line', () => {
 });
 
 // =============================================================================
-// scoreTestCase — ndcgAtK
+// scoreTestCase — normalizedDiscountedCumulativeGain
 // =============================================================================
 
-describe('scoreTestCase — ndcgAtK', () => {
+describe('scoreTestCase — normalizedDiscountedCumulativeGain', () => {
   it('perfect ranking (all expected at top) → NDCG 1.0', () => {
     // expected: [10, 20]. Results: [10, 20, 99]. Both expected docs at positions 0 and 1.
     // DCG = 1/log2(2) + 1/log2(3) = 1.0 + 0.6309 = 1.6309
@@ -170,7 +170,7 @@ describe('scoreTestCase — ndcgAtK', () => {
     const testCase = makeTestCase([10, 20]);
     const results = [makeResult(10), makeResult(20), makeResult(99)];
     const scored = scoreTestCase(testCase, results, 100);
-    expect(scored.ndcgAtK).toBeCloseTo(1.0);
+    expect(scored.normalizedDiscountedCumulativeGain).toBeCloseTo(1.0);
   });
 
   it('imperfect ranking (expected docs not at top) → NDCG ≈ 0.6934', () => {
@@ -194,36 +194,36 @@ describe('scoreTestCase — ndcgAtK', () => {
     const testCase = makeTestCase([10, 20]);
     const results = [makeResult(99), makeResult(10), makeResult(20)];
     const scored = scoreTestCase(testCase, results, 100);
-    expect(scored.ndcgAtK).toBeCloseTo(0.6934, 3);
+    expect(scored.normalizedDiscountedCumulativeGain).toBeCloseTo(0.6934, 3);
   });
 
   it('no expected docs found → NDCG 0', () => {
     const testCase = makeTestCase([42]);
     const results = [makeResult(1), makeResult(2), makeResult(3)];
     const scored = scoreTestCase(testCase, results, 100);
-    expect(scored.ndcgAtK).toBe(0);
+    expect(scored.normalizedDiscountedCumulativeGain).toBe(0);
   });
 
   it('out-of-scope → NDCG 0', () => {
     const testCase = makeTestCase([]);
     const results: ISearchResultProps[] = [];
     const scored = scoreTestCase(testCase, results, 100);
-    expect(scored.ndcgAtK).toBe(0);
+    expect(scored.normalizedDiscountedCumulativeGain).toBe(0);
   });
 
   it('single expected doc at position 0 → NDCG 1.0', () => {
     const testCase = makeTestCase([42]);
     const results = [makeResult(42), makeResult(7)];
     const scored = scoreTestCase(testCase, results, 100);
-    expect(scored.ndcgAtK).toBeCloseTo(1.0);
+    expect(scored.normalizedDiscountedCumulativeGain).toBeCloseTo(1.0);
   });
 });
 
 // =============================================================================
-// computeMetrics — ndcgAtK
+// computeMetrics — normalizedDiscountedCumulativeGain
 // =============================================================================
 
-describe('computeMetrics — ndcgAtK', () => {
+describe('computeMetrics — normalizedDiscountedCumulativeGain', () => {
   it('averages NDCG across normal results', () => {
     const results: ITestResultProps[] = [
       // perfect: NDCG = 1.0
@@ -233,7 +233,7 @@ describe('computeMetrics — ndcgAtK', () => {
     ];
     const metrics = computeMetrics(results);
     // (1.0 + 0) / 2 = 0.5
-    expect(metrics.ndcgAtK).toBeCloseTo(0.5);
+    expect(metrics.normalizedDiscountedCumulativeGain).toBeCloseTo(0.5);
   });
 
   it('excludes out-of-scope from NDCG average', () => {
@@ -245,7 +245,7 @@ describe('computeMetrics — ndcgAtK', () => {
     ];
     const metrics = computeMetrics(results);
     // Only 1 normal result; NDCG = 1.0 / 1 = 1.0
-    expect(metrics.ndcgAtK).toBeCloseTo(1.0);
+    expect(metrics.normalizedDiscountedCumulativeGain).toBeCloseTo(1.0);
   });
 });
 
@@ -260,7 +260,7 @@ function makeComparableMetrics(overrides: Partial<IComparableMetricsProps> = {})
     recall: 80,
     zeroResultRate: 5,
     meanReciprocalRank: 0.75,
-    ndcgAtK: 0.8,
+    normalizedDiscountedCumulativeGain: 0.8,
     avgResponseTimeMs: 200,
     ...overrides,
   };
