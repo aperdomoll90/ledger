@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ISearchResultProps } from '../src/lib/search/ai-search.js';
 import { scoreTestCase, type IGoldenTestCaseProps } from '../src/lib/eval/eval.js';
-import { computeConfidenceIntervals, computeScoreCalibration } from '../src/lib/eval/eval-advanced.js';
+import { computeConfidenceIntervals, computeScoreCalibration, computeCoverageAnalysis } from '../src/lib/eval/eval-advanced.js';
 
 // =============================================================================
 // Helpers
@@ -198,5 +198,68 @@ describe('computeScoreCalibration', () => {
       calibration.relevantScores.mean - calibration.irrelevantScores.mean,
       10,
     );
+  });
+});
+
+// =============================================================================
+// computeCoverageAnalysis
+// =============================================================================
+
+describe('computeCoverageAnalysis — counts queries per tag and total tags correctly', () => {
+  it('counts queries per tag and total tags correctly', () => {
+    const testResults = [];
+
+    const testCaseA = { id: 1, query: 'query-1', expected_doc_ids: [10], tags: ['search', 'basic'] };
+    const testCaseB = { id: 2, query: 'query-2', expected_doc_ids: [20], tags: ['search', 'advanced'] };
+    const testCaseC = { id: 3, query: 'query-3', expected_doc_ids: [30], tags: ['basic'] };
+
+    testResults.push(scoreTestCase(testCaseA, [makeResult(10, 0.9)], 50));
+    testResults.push(scoreTestCase(testCaseB, [makeResult(20, 0.9)], 50));
+    testResults.push(scoreTestCase(testCaseC, [makeResult(30, 0.9)], 50));
+
+    const coverage = computeCoverageAnalysis(testResults);
+
+    expect(coverage.totalQueries).toBe(3);
+    expect(coverage.totalTags).toBe(3); // 'search', 'basic', 'advanced'
+    expect(coverage.queriesPerTag['search']).toBe(2);
+    expect(coverage.queriesPerTag['basic']).toBe(2);
+    expect(coverage.queriesPerTag['advanced']).toBe(1);
+  });
+
+  it('identifies unique expected documents and deduplicates across queries', () => {
+    const testResults = [];
+
+    // Two queries share doc 10 as expected; doc 20 appears once
+    const testCaseA = { id: 1, query: 'query-1', expected_doc_ids: [10, 20], tags: [] };
+    const testCaseB = { id: 2, query: 'query-2', expected_doc_ids: [10, 30], tags: [] };
+
+    testResults.push(scoreTestCase(testCaseA, [makeResult(10, 0.9)], 50));
+    testResults.push(scoreTestCase(testCaseB, [makeResult(10, 0.9)], 50));
+
+    const coverage = computeCoverageAnalysis(testResults);
+
+    expect(coverage.uniqueExpectedDocuments).toBe(3); // 10, 20, 30
+    expect(coverage.expectedDocumentIds).toHaveLength(3);
+    expect(coverage.expectedDocumentIds).toContain(10);
+    expect(coverage.expectedDocumentIds).toContain(20);
+    expect(coverage.expectedDocumentIds).toContain(30);
+  });
+
+  it('counts out-of-scope queries separately', () => {
+    const testResults = [];
+
+    const normalTestCase    = { id: 1, query: 'query-1', expected_doc_ids: [10], tags: [] };
+    const outOfScopeTestCaseA = { id: 2, query: 'query-2', expected_doc_ids: [], tags: [] };
+    const outOfScopeTestCaseB = { id: 3, query: 'query-3', expected_doc_ids: [], tags: [] };
+
+    testResults.push(scoreTestCase(normalTestCase,      [makeResult(10, 0.9)], 50));
+    testResults.push(scoreTestCase(outOfScopeTestCaseA, [makeResult(99, 0.5)], 50));
+    testResults.push(scoreTestCase(outOfScopeTestCaseB, [makeResult(99, 0.5)], 50));
+
+    const coverage = computeCoverageAnalysis(testResults);
+
+    expect(coverage.normalCount).toBe(1);
+    expect(coverage.outOfScopeCount).toBe(2);
+    expect(coverage.totalQueries).toBe(3);
   });
 });

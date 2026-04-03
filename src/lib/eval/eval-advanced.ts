@@ -23,6 +23,16 @@ export interface IScoreCalibrationProps {
   separation:       number; // relevantScores.mean - irrelevantScores.mean
 }
 
+export interface ICoverageAnalysisProps {
+  totalQueries:            number;
+  normalCount:             number;
+  outOfScopeCount:         number;
+  totalTags:               number;
+  queriesPerTag:           Record<string, number>;
+  uniqueExpectedDocuments: number;
+  expectedDocumentIds:     number[];
+}
+
 export interface IConfidenceIntervalProps {
   point: number;   // the actual metric value
   lower: number;   // 2.5th percentile
@@ -228,5 +238,55 @@ export function computeScoreCalibration(results: ITestResultProps[]): IScoreCali
     relevantScores,
     irrelevantScores,
     separation: relevantScores.mean - irrelevantScores.mean,
+  };
+}
+
+// =============================================================================
+// computeCoverageAnalysis
+// =============================================================================
+
+/**
+ * Analyses golden set coverage — which parts of the knowledge base are
+ * well-tested vs blind spots.
+ *
+ * - Normal queries: expected_doc_ids.length > 0
+ * - Out-of-scope queries: expected_doc_ids.length === 0
+ * - queriesPerTag: how many queries carry each tag
+ * - expectedDocumentIds: deduplicated union of all expected_doc_ids, sorted ascending
+ */
+export function computeCoverageAnalysis(results: ITestResultProps[]): ICoverageAnalysisProps {
+  let normalCount     = 0;
+  let outOfScopeCount = 0;
+  const queriesPerTag: Record<string, number> = {};
+  const seenDocumentIds = new Set<number>();
+
+  for (const result of results) {
+    if (result.testCase.expected_doc_ids.length === 0) {
+      outOfScopeCount++;
+    } else {
+      normalCount++;
+    }
+
+    for (const tag of result.testCase.tags) {
+      queriesPerTag[tag] = (queriesPerTag[tag] ?? 0) + 1;
+    }
+
+    for (const documentId of result.testCase.expected_doc_ids) {
+      seenDocumentIds.add(documentId);
+    }
+  }
+
+  const expectedDocumentIds = [...seenDocumentIds].sort(
+    (documentIdA, documentIdB) => documentIdA - documentIdB,
+  );
+
+  return {
+    totalQueries:            results.length,
+    normalCount,
+    outOfScopeCount,
+    totalTags:               Object.keys(queriesPerTag).length,
+    queriesPerTag,
+    uniqueExpectedDocuments: expectedDocumentIds.length,
+    expectedDocumentIds,
   };
 }
