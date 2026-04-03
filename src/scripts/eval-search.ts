@@ -13,6 +13,7 @@ import { searchHybrid } from '../lib/search/ai-search.js';
 import { scoreTestCase, computeMetrics, formatReport, compareRuns, formatComparison } from '../lib/eval/eval.js';
 import type { IGoldenTestCaseProps, ITestResultProps } from '../lib/eval/eval.js';
 import { saveEvalRun, loadPreviousRun } from '../lib/eval/eval-store.js';
+import { computeConfidenceIntervals, computeScoreCalibration, computeCoverageAnalysis, formatAdvancedReport } from '../lib/eval/eval-advanced.js';
 
 // =============================================================================
 // Setup
@@ -111,7 +112,7 @@ async function runEval(): Promise<void> {
         recall:              metrics.recall,
         zeroResultRate:      metrics.zeroResultRate,
         meanReciprocalRank:  metrics.meanReciprocalRank,
-        ndcgAtK:             metrics.ndcgAtK,
+        normalizedDiscountedCumulativeGain:             metrics.normalizedDiscountedCumulativeGain,
         avgResponseTimeMs:   metrics.avgResponseTimeMs,
       },
       {
@@ -120,12 +121,17 @@ async function runEval(): Promise<void> {
         recall:              previousRun.recall,
         zeroResultRate:      previousRun.zero_result_rate,
         meanReciprocalRank:  0, // Previous runs before MRR was added won't have it
-        ndcgAtK:             0, // Previous runs before NDCG was added won't have it
+        normalizedDiscountedCumulativeGain:             0, // Previous runs before NDCG was added won't have it
         avgResponseTimeMs:   previousRun.avg_response_time_ms,
       },
     );
     console.log('\n' + formatComparison(comparison));
   }
+
+  const confidenceIntervals = computeConfidenceIntervals(results);
+  const scoreCalibration = computeScoreCalibration(results);
+  const coverageAnalysis = computeCoverageAnalysis(results);
+  console.log('\n' + formatAdvancedReport(confidenceIntervals, scoreCalibration, coverageAnalysis));
 }
 
 runEval().catch((error) => {

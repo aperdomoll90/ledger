@@ -290,3 +290,104 @@ export function computeCoverageAnalysis(results: ITestResultProps[]): ICoverageA
     expectedDocumentIds,
   };
 }
+
+// =============================================================================
+// formatAdvancedReport
+// =============================================================================
+
+/**
+ * Formats confidence intervals, score calibration, and coverage analysis into
+ * a human-readable string for display in the CLI or eval runner.
+ *
+ * - Percentage metrics (hitRate, firstResultAccuracy, recall, zeroResultRate)
+ *   render as: 88.5% (±4.2%, 95% CI: 84.3–92.7%)
+ * - Ratio metrics (meanReciprocalRank, normalizedDiscountedCumulativeGain)
+ *   render as: 0.601 (±0.052, 95% CI: 0.549–0.653)
+ * - Tags with fewer than 3 queries are marked as undertested.
+ */
+export function formatAdvancedReport(
+  intervals: IMetricConfidenceIntervalsProps,
+  calibration: IScoreCalibrationProps,
+  coverage: ICoverageAnalysisProps,
+): string {
+  const lines: string[] = [];
+
+  // ---------------------------------------------------------------------------
+  // Section 1 — CONFIDENCE INTERVALS
+  // ---------------------------------------------------------------------------
+
+  lines.push('='.repeat(60));
+  lines.push('CONFIDENCE INTERVALS (95%, bootstrap)');
+  lines.push('='.repeat(60));
+  lines.push('');
+
+  function formatPercentInterval(interval: IConfidenceIntervalProps): string {
+    const intervalWidth = (interval.width / 2) * 100;
+    return `${(interval.point * 100).toFixed(1)}% (±${intervalWidth.toFixed(1)}%, 95% CI: ${(interval.lower * 100).toFixed(1)}–${(interval.upper * 100).toFixed(1)}%)`;
+  }
+
+  function formatRatioInterval(interval: IConfidenceIntervalProps): string {
+    const intervalWidth = interval.width / 2;
+    return `${interval.point.toFixed(3)} (±${intervalWidth.toFixed(3)}, 95% CI: ${interval.lower.toFixed(3)}–${interval.upper.toFixed(3)})`;
+  }
+
+  lines.push(`  Hit rate:              ${formatPercentInterval(intervals.hitRate)}`);
+  lines.push(`  First-result accuracy: ${formatPercentInterval(intervals.firstResultAccuracy)}`);
+  lines.push(`  Recall:                ${formatPercentInterval(intervals.recall)}`);
+  lines.push(`  Zero-result rate:      ${formatPercentInterval(intervals.zeroResultRate)}`);
+  lines.push(`  MRR:                   ${formatRatioInterval(intervals.meanReciprocalRank)}`);
+  lines.push(`  NDCG@k:                ${formatRatioInterval(intervals.normalizedDiscountedCumulativeGain)}`);
+  lines.push('');
+
+  // ---------------------------------------------------------------------------
+  // Section 2 — SCORE CALIBRATION
+  // ---------------------------------------------------------------------------
+
+  lines.push('='.repeat(60));
+  lines.push('SCORE CALIBRATION');
+  lines.push('='.repeat(60));
+  lines.push('');
+
+  const relevant   = calibration.relevantScores;
+  const irrelevant = calibration.irrelevantScores;
+
+  lines.push(`  Relevant scores   (n=${relevant.count}):`);
+  lines.push(`    mean: ${relevant.mean.toFixed(3)}, median: ${relevant.median.toFixed(3)}, range: [${relevant.min.toFixed(3)}–${relevant.max.toFixed(3)}]`);
+  lines.push('');
+  lines.push(`  Irrelevant scores (n=${irrelevant.count}):`);
+  lines.push(`    mean: ${irrelevant.mean.toFixed(3)}, median: ${irrelevant.median.toFixed(3)}, range: [${irrelevant.min.toFixed(3)}–${irrelevant.max.toFixed(3)}]`);
+  lines.push('');
+  lines.push(`  separation: ${calibration.separation.toFixed(3)} (higher = better distinction between relevant and irrelevant)`);
+  lines.push('');
+
+  // ---------------------------------------------------------------------------
+  // Section 3 — COVERAGE ANALYSIS
+  // ---------------------------------------------------------------------------
+
+  lines.push('='.repeat(60));
+  lines.push('COVERAGE ANALYSIS');
+  lines.push('='.repeat(60));
+  lines.push('');
+
+  lines.push(`  Total queries:    ${coverage.totalQueries} (${coverage.normalCount} normal, ${coverage.outOfScopeCount} out-of-scope)`);
+  lines.push(`  Unique docs:      ${coverage.uniqueExpectedDocuments}`);
+  lines.push(`  Tags covered:     ${coverage.totalTags}`);
+  lines.push('');
+
+  const sortedTagEntries = Object.entries(coverage.queriesPerTag).sort(
+    ([, countA], [, countB]) => countB - countA,
+  );
+
+  for (const [tag, count] of sortedTagEntries) {
+    const undertested = count < 3 ? ' ← undertested' : '';
+    lines.push(`    ${tag}: ${count}${undertested}`);
+  }
+
+  if (sortedTagEntries.length === 0) {
+    lines.push('    (no tags)');
+  }
+
+  lines.push('');
+
+  return lines.join('\n');
+}

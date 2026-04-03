@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ISearchResultProps } from '../src/lib/search/ai-search.js';
 import { scoreTestCase, type IGoldenTestCaseProps } from '../src/lib/eval/eval.js';
-import { computeConfidenceIntervals, computeScoreCalibration, computeCoverageAnalysis } from '../src/lib/eval/eval-advanced.js';
+import { computeConfidenceIntervals, computeScoreCalibration, computeCoverageAnalysis, formatAdvancedReport } from '../src/lib/eval/eval-advanced.js';
 
 // =============================================================================
 // Helpers
@@ -261,5 +261,30 @@ describe('computeCoverageAnalysis — counts queries per tag and total tags corr
     expect(coverage.normalCount).toBe(1);
     expect(coverage.outOfScopeCount).toBe(2);
     expect(coverage.totalQueries).toBe(3);
+  });
+});
+
+// =============================================================================
+// formatAdvancedReport
+// =============================================================================
+
+describe('formatAdvancedReport', () => {
+  it('includes all three sections', () => {
+    const testResults = Array.from({ length: 20 }, (_, index) => {
+      const testCase = makeTestCase(index + 1, [(index + 1) * 10]);
+      return scoreTestCase(testCase, [makeResult((index + 1) * 10, 0.9), makeResult(99, 0.3)], 100);
+    });
+
+    const intervals = computeConfidenceIntervals(testResults, 100);
+    const calibration = computeScoreCalibration(testResults);
+    const coverage = computeCoverageAnalysis(testResults);
+
+    const report = formatAdvancedReport(intervals, calibration, coverage);
+
+    expect(report).toContain('CONFIDENCE INTERVALS');
+    expect(report).toContain('SCORE CALIBRATION');
+    expect(report).toContain('COVERAGE ANALYSIS');
+    expect(report).toContain('±');
+    expect(report).toContain('separation');
   });
 });
