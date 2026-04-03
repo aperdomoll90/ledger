@@ -1,5 +1,6 @@
 // eval-advanced.ts
-// Advanced eval utilities — confidence intervals via bootstrap resampling.
+// Advanced eval utilities — confidence intervals via bootstrap resampling,
+// score calibration for relevant vs irrelevant result distributions.
 // Pure functions — no I/O, no database calls.
 
 import { computeMetrics, type ITestResultProps } from './eval.js';
@@ -7,6 +8,20 @@ import { computeMetrics, type ITestResultProps } from './eval.js';
 // =============================================================================
 // Types
 // =============================================================================
+
+export interface IScoreDistributionProps {
+  count:  number;
+  mean:   number;
+  median: number;
+  min:    number;
+  max:    number;
+}
+
+export interface IScoreCalibrationProps {
+  relevantScores:   IScoreDistributionProps;
+  irrelevantScores: IScoreDistributionProps;
+  separation:       number; // relevantScores.mean - irrelevantScores.mean
+}
 
 export interface IConfidenceIntervalProps {
   point: number;   // the actual metric value
@@ -21,7 +36,7 @@ export interface IMetricConfidenceIntervalsProps {
   recall:              IConfidenceIntervalProps;
   zeroResultRate:      IConfidenceIntervalProps;
   meanReciprocalRank:  IConfidenceIntervalProps;
-  ndcgAtK:             IConfidenceIntervalProps;
+  normalizedDiscountedCumulativeGain:             IConfidenceIntervalProps;
 }
 
 // =============================================================================
@@ -117,7 +132,7 @@ export function computeConfidenceIntervals(
   const bootstrapRecalls:              number[] = [];
   const bootstrapZeroResultRates:      number[] = [];
   const bootstrapMeanReciprocalRanks:  number[] = [];
-  const bootstrapNdcgAtKValues:        number[] = [];
+  const bootstrapNormalizedDiscountedCumulativeGainValues:        number[] = [];
 
   for (let iteration = 0; iteration < iterations; iteration++) {
     const resampledResults = resampleWithReplacement(results);
@@ -128,7 +143,7 @@ export function computeConfidenceIntervals(
     bootstrapRecalls.push(resampledMetrics.recall);
     bootstrapZeroResultRates.push(resampledMetrics.zeroResultRate);
     bootstrapMeanReciprocalRanks.push(resampledMetrics.meanReciprocalRank);
-    bootstrapNdcgAtKValues.push(resampledMetrics.ndcgAtK);
+    bootstrapNormalizedDiscountedCumulativeGainValues.push(resampledMetrics.normalizedDiscountedCumulativeGain);
   }
 
   return {
@@ -137,6 +152,81 @@ export function computeConfidenceIntervals(
     recall:              buildInterval(bootstrapRecalls,              pointMetrics.recall),
     zeroResultRate:      buildInterval(bootstrapZeroResultRates,      pointMetrics.zeroResultRate),
     meanReciprocalRank:  buildInterval(bootstrapMeanReciprocalRanks,  pointMetrics.meanReciprocalRank),
-    ndcgAtK:             buildInterval(bootstrapNdcgAtKValues,        pointMetrics.ndcgAtK),
+    normalizedDiscountedCumulativeGain:             buildInterval(bootstrapNormalizedDiscountedCumulativeGainValues,        pointMetrics.normalizedDiscountedCumulativeGain),
+  };
+}
+
+// =============================================================================
+// computeDistribution
+// =============================================================================
+
+/**
+ * Computes summary statistics for an array of numeric scores.
+ * Returns all-zero IScoreDistributionProps if the array is empty.
+ * Median is the middle value of the sorted array, or the average of the two
+ * middle values when the array has even length.
+ */
+export function computeDistribution(scores: number[]): IScoreDistributionProps {
+  if (scores.length === 0) {
+    return { count: 0, mean: 0, median: 0, min: 0, max: 0 };
+  }
+
+  const sorted = [...scores].sort((scoreA, scoreB) => scoreA - scoreB);
+  const count = sorted.length;
+
+  const sum = sorted.reduce((total, score) => total + score, 0);
+  const mean = sum / count;
+
+  const middleIndex = Math.floor(count / 2);
+  const median = count % 2 === 1
+    ? sorted[middleIndex]
+    : (sorted[middleIndex - 1] + sorted[middleIndex]) / 2;
+
+  return {
+    count,
+    mean,
+    median,
+    min: sorted[0],
+    max: sorted[count - 1],
+  };
+}
+
+// =============================================================================
+// computeScoreCalibration
+// =============================================================================
+
+/**
+ * Separates scores into relevant (returned doc was in expected_doc_ids) and
+ * irrelevant buckets, then computes distribution stats for each.
+ *
+ * Out-of-scope results (expected_doc_ids is empty) are skipped entirely.
+ * Separation = relevant mean − irrelevant mean.
+ */
+export function computeScoreCalibration(results: ITestResultProps[]): IScoreCalibrationProps {
+  const relevantScoreValues: number[] = [];
+  const irrelevantScoreValues: number[] = [];
+
+  for (const result of results) {
+    if (result.testCase.expected_doc_ids.length === 0) continue;
+
+    for (let position = 0; position < result.returnedIds.length; position++) {
+      const docId = result.returnedIds[position];
+      const score = result.returnedScores[position];
+
+      if (result.testCase.expected_doc_ids.includes(docId)) {
+        relevantScoreValues.push(score);
+      } else {
+        irrelevantScoreValues.push(score);
+      }
+    }
+  }
+
+  const relevantScores   = computeDistribution(relevantScoreValues);
+  const irrelevantScores = computeDistribution(irrelevantScoreValues);
+
+  return {
+    relevantScores,
+    irrelevantScores,
+    separation: relevantScores.mean - irrelevantScores.mean,
   };
 }

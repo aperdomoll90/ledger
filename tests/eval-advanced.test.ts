@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ISearchResultProps } from '../src/lib/search/ai-search.js';
 import { scoreTestCase, type IGoldenTestCaseProps } from '../src/lib/eval/eval.js';
-import { computeConfidenceIntervals } from '../src/lib/eval/eval-advanced.js';
+import { computeConfidenceIntervals, computeScoreCalibration } from '../src/lib/eval/eval-advanced.js';
 
 // =============================================================================
 // Helpers
@@ -84,7 +84,7 @@ describe('computeConfidenceIntervals — structure', () => {
     expect(intervals).toHaveProperty('recall');
     expect(intervals).toHaveProperty('zeroResultRate');
     expect(intervals).toHaveProperty('meanReciprocalRank');
-    expect(intervals).toHaveProperty('ndcgAtK');
+    expect(intervals).toHaveProperty('normalizedDiscountedCumulativeGain');
   });
 
   it('each interval has point, lower, upper, width fields', () => {
@@ -141,5 +141,62 @@ describe('computeConfidenceIntervals — correctness', () => {
 
     expect(intervals.firstResultAccuracy.lower).toBeGreaterThan(90);
     expect(intervals.firstResultAccuracy.upper).toBeCloseTo(100, 0);
+  });
+});
+
+// =============================================================================
+// computeScoreCalibration
+// =============================================================================
+
+describe('computeScoreCalibration', () => {
+  it('computes separate stats for relevant and irrelevant results, relevant mean > irrelevant mean, correct counts', () => {
+    // 4 results: each has 1 relevant doc (score 0.9) + 1 irrelevant doc (score 0.4)
+    const testResults = [];
+    for (let position = 1; position <= 4; position++) {
+      const testCase = makeTestCase(position, [position]);
+      const searchResults = [makeResult(position, 0.9), makeResult(99, 0.4)];
+      testResults.push(scoreTestCase(testCase, searchResults, 50));
+    }
+
+    const calibration = computeScoreCalibration(testResults);
+
+    expect(calibration.relevantScores.count).toBe(4);
+    expect(calibration.irrelevantScores.count).toBe(4);
+    expect(calibration.relevantScores.mean).toBeCloseTo(0.9, 5);
+    expect(calibration.irrelevantScores.mean).toBeCloseTo(0.4, 5);
+    expect(calibration.relevantScores.mean).toBeGreaterThan(calibration.irrelevantScores.mean);
+  });
+
+  it('handles no relevant results (all misses) — relevant count 0', () => {
+    // All results return only docs that are NOT in expected_doc_ids
+    const testResults = [];
+    for (let position = 1; position <= 3; position++) {
+      const testCase = makeTestCase(position, [position]);
+      const searchResults = [makeResult(99, 0.6), makeResult(100, 0.5)];
+      testResults.push(scoreTestCase(testCase, searchResults, 50));
+    }
+
+    const calibration = computeScoreCalibration(testResults);
+
+    expect(calibration.relevantScores.count).toBe(0);
+    expect(calibration.relevantScores.mean).toBe(0);
+    expect(calibration.irrelevantScores.count).toBe(6);
+  });
+
+  it('separation is positive when relevant scores are higher', () => {
+    const testResults = [];
+    for (let position = 1; position <= 5; position++) {
+      const testCase = makeTestCase(position, [position]);
+      const searchResults = [makeResult(position, 0.85), makeResult(99, 0.3)];
+      testResults.push(scoreTestCase(testCase, searchResults, 50));
+    }
+
+    const calibration = computeScoreCalibration(testResults);
+
+    expect(calibration.separation).toBeGreaterThan(0);
+    expect(calibration.separation).toBeCloseTo(
+      calibration.relevantScores.mean - calibration.irrelevantScores.mean,
+      10,
+    );
   });
 });
