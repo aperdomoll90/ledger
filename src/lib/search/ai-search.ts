@@ -5,6 +5,7 @@
 
 import type { Domain, Protection, DocumentStatus, ISupabaseClientProps, IClientsProps } from '../documents/classification.js';
 import { getOrCacheQueryEmbedding, toVectorString } from './embeddings.js';
+import { rerankResults } from './reranker.js';
 
 // =============================================================================
 // Search result interfaces
@@ -63,6 +64,7 @@ export interface IHybridSearchProps {
   document_type?: string;
   project?: string;
   reciprocalRankFusionK?: number;
+  reranker?: 'none' | 'cohere';
 }
 
 export interface IRetrieveContextProps {
@@ -97,7 +99,7 @@ function logSearchEvaluation(
   supabase: ISupabaseClientProps,
   params: {
     query: string;
-    searchMode: 'vector' | 'keyword' | 'hybrid';
+    searchMode: 'vector' | 'keyword' | 'hybrid' | 'hybrid+rerank';
     results: ISearchResultProps[];
     responseTimeMs: number;
   },
@@ -223,11 +225,17 @@ export async function searchHybrid(
   const startTime = Date.now();
   const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
 
+  // When reranking, fetch more candidates so the reranker has a bigger pool.
+  // The reranker will select the best N from this larger set.
+  const useReranker = props.reranker === 'cohere' && clients.cohereApiKey;
+  const desiredLimit = props.limit ?? 10;
+  const requestLimit = useReranker ? desiredLimit * 2 : desiredLimit;
+
   const { data, error } = await clients.supabase.rpc('match_documents_hybrid', {
     q_emb: toVectorString(queryEmbedding),
     q_text: props.query,
     p_threshold: props.threshold ?? 0.25,
-    p_max_results: props.limit ?? 10,
+    p_max_results: requestLimit,
     p_domain: props.domain ?? null,
     p_document_type: props.document_type ?? null,
     p_project: props.project ?? null,
@@ -235,11 +243,20 @@ export async function searchHybrid(
   });
 
   if (error) throw new Error(`Hybrid search failed: ${error.message}`);
-  const results = (data ?? []) as ISearchResultProps[];
+  let results = (data ?? []) as ISearchResultProps[];
+
+  // Rerank: send candidates to Cohere cross-encoder for re-scoring.
+  // If reranking fails, results are returned unchanged (graceful degradation).
+  if (useReranker && results.length > 0) {
+    results = await rerankResults(props.query, results, {
+      apiKey: clients.cohereApiKey!,
+      topN: desiredLimit,
+    });
+  }
 
   logSearchEvaluation(clients.supabase, {
     query: props.query,
-    searchMode: 'hybrid',
+    searchMode: useReranker ? 'hybrid+rerank' : 'hybrid',
     results,
     responseTimeMs: Date.now() - startTime,
   });

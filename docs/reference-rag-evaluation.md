@@ -587,9 +587,32 @@ This is what the standard eval runner measures. Key levers:
 
 ### Reranking Eval
 
-**Question:** Does reranking improve the order of results?
+#### What a reranker is
 
-**Protocol:**
+A reranker sits between search and the final results. Search finds 20 candidate documents fast (using embeddings and keywords). The reranker then reads each candidate alongside the original query and re-scores them based on whether they actually answer the question — not just whether they contain similar words. It reorders the list and returns the top 10.
+
+It doesn't find new documents. It doesn't remove documents. It doesn't change their content. It just puts them in a better order.
+
+```
+Without reranker:   Query → fast search → top 10 (dumb ranking)
+With reranker:      Query → fast search → top 20 → reranker reads each one → top 10 (smart ranking)
+```
+
+#### Where it sits in the pipeline
+
+```
+Query → Embed (OpenAI) → Vector search + Keyword search → RRF fusion → Top 20 candidates
+  → RERANKER (cross-encoder) → Re-score each candidate → Return top 10
+```
+
+The reranker is a language model trained on millions of "query + document" pairs labeled relevant or not. It reads both texts together (unlike embeddings which encode them separately) and scores how well the document answers the query. This is slower (one model call per candidate) but much more accurate than comparing number arrays.
+
+#### Why you'd want one
+
+When eval shows that relevant and irrelevant documents score almost the same (small score separation), search is finding the right docs but ranking them poorly. A reranker fixes ranking without needing to change embeddings, chunks, or search logic.
+
+#### Eval protocol
+
 1. Run eval without reranker — record MRR and first-result accuracy
 2. Add reranker to pipeline
 3. Run eval again — same golden dataset
@@ -598,6 +621,16 @@ This is what the standard eval runner measures. Key levers:
 **What a good reranker does:** Takes position-3 hits and moves them to position-1. Hit rate stays the same (same docs found), but MRR and first-result accuracy jump.
 
 **What to watch:** Reranking adds latency (50-500ms per query). If latency matters, the MRR gain must justify the cost.
+
+#### Data privacy concern
+
+Most hosted reranker APIs (Cohere, Jina, etc.) use your data for model training on their free tiers. If your documents contain sensitive or personal content, this matters. Options:
+
+- **Paid API tier** — most providers stop using your data for training on paid plans. Verify per provider.
+- **Self-hosted model** — run an open-source cross-encoder locally (e.g. `cross-encoder/ms-marco-MiniLM-L-6-v2`, ~80MB). No data leaves your machine, but requires CPU/GPU resources. On CPU-only machines expect ~200-500ms per rerank for 20 candidates — usable but slower than hosted APIs.
+- **No discrete GPU** — without NVIDIA/CUDA, local models run on CPU only (10-20x slower than GPU). Integrated GPUs (AMD Radeon, Intel Iris) have limited ML framework support.
+
+Always check the provider's data usage policy before sending document content through their API.
 
 ---
 

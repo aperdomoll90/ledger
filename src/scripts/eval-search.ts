@@ -31,6 +31,7 @@ if (!supabaseUrl || !supabaseKey || !openaiKey) {
 const clients: IClientsProps = {
   supabase: createClient(supabaseUrl, supabaseKey),
   openai: new OpenAI({ apiKey: openaiKey }),
+  cohereApiKey: process.env.COHERE_API_KEY || undefined,
 };
 
 // Search config imported from eval-store.ts (single source of truth)
@@ -67,7 +68,11 @@ async function runEval(): Promise<void> {
 
   for (const testCase of testCases as IGoldenTestCaseProps[]) {
     const startTime = Date.now();
-    const searchResults = await searchHybrid(clients, { query: testCase.query, limit: 10 });
+    const searchResults = await searchHybrid(clients, {
+      query: testCase.query,
+      limit: CURRENT_SEARCH_CONFIG.limit as number,
+      reranker: CURRENT_SEARCH_CONFIG.reranker as 'none' | 'cohere',
+    });
     const result = scoreTestCase(testCase, searchResults, Date.now() - startTime);
     results.push(result);
 

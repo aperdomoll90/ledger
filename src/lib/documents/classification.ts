@@ -138,7 +138,9 @@ export interface IOpenAIClientProps {
 }
 
 // Combined clients — passed to functions that need both database and AI
+// cohereApiKey is optional — reranking is skipped when not provided
 export interface IClientsProps {
   supabase: ISupabaseClientProps;
   openai: IOpenAIClientProps;
+  cohereApiKey?: string;
 }

@@ -1614,7 +1614,24 @@ Key findings: exact-term strong (100% hit), conceptual weak (77% hit, 31% first-
 - Verified run 5 in Supabase — all 15 columns populated correctly
 - Updated schema doc + test assertions
 
+### Phase 4.5.1: Reranker
+- Built `src/lib/search/reranker.ts` — Cohere cross-encoder reranking via native fetch (no SDK)
+- Wired into `searchHybrid()` as optional step — fetches 2x candidates, reranker selects best N
+- Added `cohereApiKey` to `IClientsProps`, `LedgerConfig`, MCP server, eval script, eval CLI
+- Added `reranker` option to `IHybridSearchProps` ('none' | 'cohere')
+- Search telemetry logs `hybrid+rerank` mode when active
+- Security: API key only in Authorization header, never in request body or stored data
+- 7 new tests including security test (key not leaked in body)
+- Live eval with Cohere: **+15.3% first-result accuracy, +10.5% recall, +0.119 MRR, +0.122 NDCG**
+- **Disabled Cohere** — privacy concern, personal knowledge base data sent to third party
+- Reranker code stays in place for future local cross-encoder
+- Run 7 (no reranker) stored as current baseline
+- Added RLS policies to `eval_runs` table (SQL in Supabase)
+
+### Test Count: 152 (was 145)
+
 ### Next Session
-1. Commit all remaining changes
-2. Add RLS policies to `eval_runs` table
-3. Phase 4.5: Start tuning (reranker first — score calibration confirms poor separation)
+1. Commit all changes
+2. Phase 4.5.2: Contextual retrieval (LLM prepend per chunk — no third-party data concern since we already use OpenAI for embeddings)
+3. Phase 4.5.3: Recursive chunking
+4. Grow golden dataset toward 100+ cases

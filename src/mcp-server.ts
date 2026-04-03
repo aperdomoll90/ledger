@@ -35,6 +35,7 @@ if (!openaiKey) {
 const clients: IClientsProps = {
   supabase: createClient(supabaseUrl, supabaseKey),
   openai: new OpenAI({ apiKey: openaiKey }),
+  cohereApiKey: process.env.COHERE_API_KEY || undefined,
 };
 
 // =============================================================================

@@ -35,6 +35,7 @@ export interface LedgerConfig {
   claudeMdPath: string;
   supabase: SupabaseClient;
   openai: OpenAI;
+  cohereApiKey?: string;
 }
 
 export interface ConfigFile {
@@ -108,5 +109,6 @@ export function loadConfig(): LedgerConfig {
       process.env.SUPABASE_SERVICE_ROLE_KEY,
     ),
     openai: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+    cohereApiKey: process.env.COHERE_API_KEY || undefined,
   };
 }

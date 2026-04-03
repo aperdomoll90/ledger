@@ -22,8 +22,9 @@ export interface IEvalOptionsProps {
 
 export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProps): Promise<void> {
   const clients: IClientsProps = {
-    supabase: config.supabase,
-    openai:   config.openai,
+    supabase:     config.supabase,
+    openai:       config.openai,
+    cohereApiKey: config.cohereApiKey,
   };
 
   console.log('\n' + '='.repeat(60));
@@ -54,7 +55,11 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
 
   for (const testCase of testCases as IGoldenTestCaseProps[]) {
     const startTime = Date.now();
-    const searchResults = await searchHybrid(clients, { query: testCase.query, limit: 10 });
+    const searchResults = await searchHybrid(clients, {
+      query: testCase.query,
+      limit: CURRENT_SEARCH_CONFIG.limit as number,
+      reranker: CURRENT_SEARCH_CONFIG.reranker as 'none' | 'cohere',
+    });
     const result = scoreTestCase(testCase, searchResults, Date.now() - startTime);
     results.push(result);
 

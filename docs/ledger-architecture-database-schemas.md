@@ -609,7 +609,7 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 | `search_evaluations`           | Yes | Yes          | Yes          |                     |
 | `search_evaluation_aggregates` | Yes | Yes          | Yes          |                     |
 | `eval_golden_dataset`          | Yes | Yes          | Yes          |                     |
-| `eval_runs`                    | Yes | **No**       | **No**       | Missing policies    |
+| `eval_runs`                    | Yes | Yes          | Yes          |                     |
 
 ---
 
