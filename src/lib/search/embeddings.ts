@@ -3,7 +3,7 @@
 // The database can't call OpenAI or split text — that's TypeScript's job.
 
 import { createHash } from 'crypto';
-import type { ChunkStrategy, ChunkContentType, IOpenAIClientProps, ISupabaseClientProps } from '../documents/classification.js';
+import type { ChunkStrategy, ChunkContentType, IOpenAIClientProps, ISupabaseClientProps, IChunkConfigProps } from '../documents/classification.js';
 
 // =============================================================================
 // Chunk interface — what chunkText() returns
@@ -22,8 +22,21 @@ export interface IChunkProps {
 // =============================================================================
 
 const EMBEDDING_MODEL = 'text-embedding-3-small';
-const DEFAULT_MAX_CHUNK_CHARS = 2000;
-const DEFAULT_OVERLAP_CHARS = 200;
+
+const DEFAULT_CHUNK_CONFIG: IChunkConfigProps = {
+  maxChunkSize: 1000,
+  overlapChars: 200,
+  strategy: 'recursive',
+};
+
+// Split separators — ordered from coarsest to finest.
+// The recursive chunker tries each level in order until chunks fit.
+const SPLIT_SEPARATORS = [
+  /^#{1,6}\s/m,           // Level 0: Markdown headers
+  /\n\n+/,                // Level 1: Double newlines (paragraphs)
+  /\n/,                   // Level 2: Single newlines
+  /(?<=[.!?])\s+/,        // Level 3: Sentence boundaries
+];
 
 // =============================================================================
 // Pure functions — no API calls, no database, fully testable
@@ -59,26 +72,36 @@ export function parseVector(raw: unknown): number[] {
 }
 
 /**
- * Split text into smaller pieces for embedding.
+ * Split text into chunks using a recursive hierarchical strategy.
  *
- * Why chunk: embedding models produce better search results on focused text
- * (500-2000 chars) than on large mixed-topic documents (10,000+ chars).
+ * Implements chunk context enrichment pipeline step 1 (chunking).
+ * Based on the recursive character splitting pattern used in production
+ * RAG systems (LangChain, LlamaIndex).
  *
- * How it works:
- * 1. If text is under maxChars, return it as one chunk
- * 2. Split on paragraph boundaries (\n\n)
- * 3. Accumulate paragraphs until a chunk would exceed maxChars
- * 4. Include overlap between chunks so context isn't lost at boundaries
- * 5. Force-split any remaining chunks that are still too long
+ * Split hierarchy (coarsest to finest):
+ *   1. Markdown headers (^#{1,6}\s)
+ *   2. Double newlines (paragraph boundaries)
+ *   3. Single newlines (line breaks)
+ *   4. Sentence boundaries (after . ! ?)
+ *   5. Character-level force split (fallback)
+ *
+ * If text fits within maxChunkSize, returns it as a single chunk.
+ * Otherwise, splits at the coarsest level possible. If any resulting
+ * section still exceeds maxChunkSize, recurses to the next finer level.
+ *
+ * Overlap is applied between adjacent chunks at levels 1-4.
+ * Header-level splits (level 0) do NOT overlap — sections are
+ * semantically distinct.
  */
 export function chunkText(
   text: string,
-  strategy: ChunkStrategy = 'paragraph',
-  maxChars: number = DEFAULT_MAX_CHUNK_CHARS,
-  overlapChars: number = DEFAULT_OVERLAP_CHARS,
+  config?: Partial<IChunkConfigProps>,
 ): IChunkProps[] {
+  const resolvedConfig: IChunkConfigProps = { ...DEFAULT_CHUNK_CONFIG, ...config };
+  const { maxChunkSize, strategy } = resolvedConfig;
+
   // Short text = one chunk
-  if (text.length <= maxChars) {
+  if (text.length <= maxChunkSize) {
     return [{
       content: text,
       chunk_index: 0,
@@ -88,75 +111,129 @@ export function chunkText(
     }];
   }
 
-  // Split on paragraph boundaries
-  const paragraphs = text.split(/\n\n+/);
-  const rawChunks: string[] = [];
-  let current = '';
+  const rawChunks = recursiveSplit(text, 0, resolvedConfig);
 
-  // Greedy paragraph packing — three stages per chunk:
-  //
-  // 1. First paragraph: size check may pass but current is empty (length 0),
-  //    so the guard (current.length > 0) fails → paragraph goes into current.
-  // 2. Next paragraphs: current + paragraph + 2 (blank-line separator) still
-  //    fits under maxChars → keep appending to current.
-  // 3. Overflow: current + paragraph + 2 exceeds maxChars AND current has
-  //    content → flush current as a finished chunk, slice its tail as overlap
-  //    context, start a new current with that tail + the new paragraph.
-  //
-  // The guard prevents flushing an empty chunk when a single paragraph is
-  // already larger than maxChars — the force-split below handles that case.
-  for (const paragraph of paragraphs) {
-    if (current.length + paragraph.length + 2 > maxChars && current.length > 0) {
-      rawChunks.push(current.trim());
-      // Overlap: carry the end of this chunk into the start of the next
-      const overlap = current.slice(-overlapChars);
-      current = overlap + '\n\n' + paragraph;
-    } else {
-      current = current ? current + '\n\n' + paragraph : paragraph;
-    }
+  // Assign sequential chunk_index across all chunks
+  return rawChunks.map((chunk, index) => ({
+    ...chunk,
+    chunk_index: index,
+  }));
+}
+
+/**
+ * Core recursive splitting logic.
+ * Tries the separator at `level`. If a section still exceeds maxChunkSize,
+ * recurses to level + 1. At the bottom level, force-splits at character positions.
+ */
+function recursiveSplit(
+  text: string,
+  level: number,
+  config: IChunkConfigProps,
+): IChunkProps[] {
+  const { maxChunkSize, overlapChars, strategy } = config;
+
+  // Base case: text fits
+  if (text.length <= maxChunkSize) {
+    return [{
+      content: text,
+      chunk_index: 0, // reassigned by caller
+      content_type: 'text' as ChunkContentType,
+      strategy,
+      overlap_chars: 0,
+    }];
   }
 
-  // The loop only flushes when a paragraph overflows. After the last paragraph,
-  // current may still hold a partially filled chunk that never triggered a flush.
-  if (current.trim()) {
-    rawChunks.push(current.trim());
+  // Bottom level: force-split at character boundaries
+  if (level >= SPLIT_SEPARATORS.length) {
+    return forceCharSplit(text, maxChunkSize, overlapChars);
   }
 
-  // Force-split any chunks still over maxChars.
-  // This handles text with no blank lines (e.g. a JSON blob, base64 string, or
-  // a wall of text). The paragraph loop above can't split those — it produces a
-  // single oversized chunk because the empty-box guard prevents flushing when
-  // current is empty. Here we cut at character positions as a last resort.
-  const result: IChunkProps[] = [];
-  let finalIndex = 0;
+  const separator = SPLIT_SEPARATORS[level];
+  const isHeaderLevel = level === 0;
+  const sections = splitKeepingSeparator(text, separator, isHeaderLevel);
 
-  for (const chunk of rawChunks) {
-    if (chunk.length <= maxChars) {
-      result.push({
-        content: chunk,
-        chunk_index: finalIndex,
-        content_type: 'text',
-        strategy,
-        overlap_chars: finalIndex > 0 ? overlapChars : 0,
-      });
-      finalIndex++;
-    } else {
-      // Force split at character boundaries (step must be positive)
-      const step = Math.max(1, maxChars - overlapChars);
-      for (let offset = 0; offset < chunk.length; offset += step) {
-        result.push({
-          content: chunk.slice(offset, offset + maxChars),
-          chunk_index: finalIndex,
-          content_type: 'text',
-          strategy: 'forced',
-          overlap_chars: offset > 0 ? overlapChars : 0,
-        });
-        finalIndex++;
+  // If splitting produced only 1 section (separator not found), try next level
+  if (sections.length <= 1) {
+    return recursiveSplit(text, level + 1, config);
+  }
+
+  // Pack sections into chunks, recurse oversized ones
+  const chunks: IChunkProps[] = [];
+  let currentContent = '';
+
+  for (const section of sections) {
+    const wouldExceed = (currentContent + section).length > maxChunkSize;
+
+    if (wouldExceed && currentContent.length > 0) {
+      // Flush current accumulated content as chunk(s)
+      chunks.push(...recursiveSplit(currentContent.trim(), level + 1, config));
+
+      // Apply overlap (except at header boundaries)
+      if (!isHeaderLevel && overlapChars > 0) {
+        const overlap = currentContent.slice(-overlapChars);
+        currentContent = overlap + section;
+      } else {
+        currentContent = section;
       }
+    } else {
+      currentContent = currentContent + section;
     }
   }
 
-  return result;
+  // Flush remaining content
+  if (currentContent.trim().length > 0) {
+    chunks.push(...recursiveSplit(currentContent.trim(), level + 1, config));
+  }
+
+  // Mark overlap on chunks (first chunk has 0)
+  return chunks.map((chunk, index) => ({
+    ...chunk,
+    overlap_chars: index > 0 && !isHeaderLevel ? Math.min(overlapChars, chunk.content.length) : 0,
+  }));
+}
+
+/**
+ * Split text by a regex separator.
+ * For header-level splits, the separator (e.g. "# Title") is kept at the
+ * start of the section it belongs to. For other levels, the separator
+ * is consumed (it's whitespace/newlines anyway).
+ */
+function splitKeepingSeparator(
+  text: string,
+  separator: RegExp,
+  keepSeparator: boolean,
+): string[] {
+  if (keepSeparator) {
+    // Header split: split just before each header, keep header in its section
+    const parts = text.split(new RegExp(`(?=${separator.source})`, 'm'));
+    return parts.filter(part => part.length > 0);
+  }
+  return text.split(separator).filter(part => part.trim().length > 0);
+}
+
+/**
+ * Force-split at character boundaries as a last resort.
+ * Handles text with no structural separators (JSON blobs, base64, walls of text).
+ */
+function forceCharSplit(
+  text: string,
+  maxChunkSize: number,
+  overlapChars: number,
+): IChunkProps[] {
+  const chunks: IChunkProps[] = [];
+  const step = Math.max(1, maxChunkSize - overlapChars);
+
+  for (let offset = 0; offset < text.length; offset += step) {
+    chunks.push({
+      content: text.slice(offset, offset + maxChunkSize),
+      chunk_index: 0, // reassigned by caller
+      content_type: 'text',
+      strategy: 'forced',
+      overlap_chars: offset > 0 ? overlapChars : 0,
+    });
+  }
+
+  return chunks;
 }
 
 // =============================================================================

@@ -22,12 +22,16 @@ export interface IEvalConfigProps {
  * Update this when search parameters change (threshold, model, reranker, etc.).
  */
 export const CURRENT_SEARCH_CONFIG: IEvalConfigProps = {
-  threshold:              0.25,
-  reciprocalRankFusionK:  60,
-  embedding_model:        'openai/text-embedding-3-small',
-  limit:                  10,
-  chunking:               'paragraph',
-  reranker:               'none',
+  threshold:                0.25,
+  reciprocalRankFusionK:    60,
+  embedding_model:          'openai/text-embedding-3-small',
+  limit:                    10,
+  chunking:                 'recursive',
+  chunk_max_size:           1000,
+  chunk_overlap:            200,
+  context_enrichment:       true,
+  context_enrichment_model: 'gpt-4o-mini',
+  reranker:                 'none',
 };
 
 export interface ISaveEvalRunProps {

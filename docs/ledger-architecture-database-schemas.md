@@ -148,7 +148,7 @@ Search index. Derived from documents — each document has 1+ chunks. Can be reg
 | `chunk_strategy`     | text         | YES      |                | header, paragraph, sentence, semantic, forced        |
 | `overlap_chars`      | integer      | NO       | 0              | Characters shared with previous chunk                |
 | `domain`             | text         | NO       | 'general'      | Denormalized from parent — HNSW indexes need it      |
-| `context_summary`    | text         | YES      |                | LLM-generated context prepend (Phase 4)              |
+| `context_summary`    | text         | YES      |                | LLM-generated context prepend — chunk context enrichment (Phase 4.5.2) |
 | `token_count`        | integer      | YES      |                | Token count for budget tracking (Phase 4)            |
 | `created_at`         | timestamptz  | NO       | now()          | Creation timestamp                                   |
 
@@ -798,7 +798,10 @@ CREATE OR REPLACE FUNCTION public.document_create(
   p_agent text DEFAULT NULL, p_status text DEFAULT NULL,
   p_skill_ref text DEFAULT NULL, p_embedding_model_id text DEFAULT NULL,
   p_chunk_contents text[] DEFAULT NULL, p_chunk_embeddings vector[] DEFAULT NULL,
-  p_chunk_strategy text DEFAULT 'paragraph'
+  p_chunk_strategy text DEFAULT 'recursive',
+  p_chunk_summaries text[] DEFAULT NULL,
+  p_chunk_token_counts int[] DEFAULT NULL,
+  p_chunk_overlap int DEFAULT 0
 ) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE
   v_doc_id bigint;
@@ -820,8 +823,17 @@ BEGIN
 
   IF p_chunk_contents IS NOT NULL THEN
     FOR i IN 1..array_length(p_chunk_contents, 1) LOOP
-      INSERT INTO document_chunks (document_id, chunk_index, content, domain, embedding, embedding_model_id, chunk_strategy)
-      VALUES (v_doc_id, i - 1, p_chunk_contents[i], p_domain, p_chunk_embeddings[i], p_embedding_model_id, p_chunk_strategy);
+      INSERT INTO document_chunks (
+        document_id, chunk_index, content, domain, embedding,
+        embedding_model_id, chunk_strategy, context_summary, token_count, overlap_chars
+      )
+      VALUES (
+        v_doc_id, i - 1, p_chunk_contents[i], p_domain, p_chunk_embeddings[i],
+        p_embedding_model_id, p_chunk_strategy,
+        CASE WHEN p_chunk_summaries IS NOT NULL THEN p_chunk_summaries[i] ELSE NULL END,
+        CASE WHEN p_chunk_token_counts IS NOT NULL THEN p_chunk_token_counts[i] ELSE NULL END,
+        p_chunk_overlap
+      );
     END LOOP;
     UPDATE documents SET chunk_count = array_length(p_chunk_contents, 1) WHERE id = v_doc_id;
   END IF;
@@ -842,7 +854,10 @@ CREATE OR REPLACE FUNCTION public.document_update(
   p_agent text DEFAULT NULL, p_description text DEFAULT NULL,
   p_status text DEFAULT NULL, p_embedding_model_id text DEFAULT NULL,
   p_chunk_contents text[] DEFAULT NULL, p_chunk_embeddings vector[] DEFAULT NULL,
-  p_chunk_strategy text DEFAULT 'paragraph'
+  p_chunk_strategy text DEFAULT 'recursive',
+  p_chunk_summaries text[] DEFAULT NULL,
+  p_chunk_token_counts int[] DEFAULT NULL,
+  p_chunk_overlap int DEFAULT 0
 ) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
   v_old_content text;
@@ -869,8 +884,17 @@ BEGIN
   IF p_chunk_contents IS NOT NULL THEN
     DELETE FROM document_chunks WHERE document_id = p_id;
     FOR i IN 1..array_length(p_chunk_contents, 1) LOOP
-      INSERT INTO document_chunks (document_id, chunk_index, content, domain, embedding, embedding_model_id, chunk_strategy)
-      VALUES (p_id, i - 1, p_chunk_contents[i], v_old_domain, p_chunk_embeddings[i], p_embedding_model_id, p_chunk_strategy);
+      INSERT INTO document_chunks (
+        document_id, chunk_index, content, domain, embedding,
+        embedding_model_id, chunk_strategy, context_summary, token_count, overlap_chars
+      )
+      VALUES (
+        p_id, i - 1, p_chunk_contents[i], v_old_domain, p_chunk_embeddings[i],
+        p_embedding_model_id, p_chunk_strategy,
+        CASE WHEN p_chunk_summaries IS NOT NULL THEN p_chunk_summaries[i] ELSE NULL END,
+        CASE WHEN p_chunk_token_counts IS NOT NULL THEN p_chunk_token_counts[i] ELSE NULL END,
+        p_chunk_overlap
+      );
     END LOOP;
     UPDATE documents SET chunk_count = array_length(p_chunk_contents, 1) WHERE id = p_id;
   END IF;
@@ -1316,7 +1340,7 @@ $$;
 | `audit_log` + partitions       | Yes           | Written by all RPC functions                 |
 | `search_evaluations`           | Yes           | Written by `logSearchEvaluation()` every search |
 | `eval_golden_dataset`          | Yes           | Read by `eval-search.ts`                     |
-| `eval_runs`                    | **No**        | Table exists — write code in eval hardening plan |
+| `eval_runs`                    | Yes           | Written by `saveEvalRun()`, read by `loadPreviousRun()` in eval-store.ts |
 | `search_evaluation_aggregates` | **No**        | Table + function exist — no cron wired (Phase 7) |
 | `agents`                       | **No**        | Table exists — enforcement in Phase 6        |
 | `ingestion_queue`              | **No**        | Table exists — processing code in Phase 4.6  |

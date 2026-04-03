@@ -23,6 +23,7 @@
   10. [API Layer](#10-api-layer) — how agents talk to the system
   11. [Deployment & Infrastructure](#11-deployment--infrastructure)
 - [Production Defaults (2026)](#production-defaults-2026)
+- [Ledger Implementation](#ledger-implementation) — current pipeline, chunk context enrichment, reranking
 
 ---
 
@@ -47,8 +48,8 @@ Decision guide based on your project's characteristics:
 
 | Corpus size | What to prioritize |
 |---|---|
-| **< 100 docs** | Simple setup. pgvector, paragraph chunking, hybrid search. Skip reranking, skip contextual retrieval. Focus on getting eval working first. |
-| **100 - 10K docs** | Full pipeline. Add reranking, contextual retrieval, query cache. Tune threshold with golden dataset. |
+| **< 100 docs** | Simple setup. pgvector, paragraph chunking, hybrid search. Skip reranking, skip chunk context enrichment. Focus on getting eval working first. |
+| **100 - 10K docs** | Full pipeline. Add reranking, chunk context enrichment, query cache. Tune threshold with golden dataset. |
 | **10K - 100K docs** | Performance matters. Per-domain indexes, semantic cache, embedding cache for re-ingestion. Monitor latency. |
 | **100K+ docs** | Scale matters. Consider dedicated vector DB (Qdrant/Milvus), sharding, quantization, read replicas. |
 
@@ -79,7 +80,7 @@ Decision guide based on your project's characteristics:
 3. Search      → hybrid search (vector + keyword + RRF)
 4. API         → tools/endpoints for search + CRUD
 5. Eval        → auto-logging + golden dataset (BEFORE tuning)
-6. Tune        → reranking, contextual retrieval, threshold tuning
+6. Tune        → reranking, chunk context enrichment, threshold tuning
 7. Security    → auth, rate limiting, content sanitization
 8. Scale       → caching, per-domain indexes, monitoring
 ```
@@ -167,7 +168,7 @@ Steps in order as data moves through the pipeline:
 | Chunking & enrichment
 | **3. Chunking**              | Split text into smaller pieces so embeddings are accurate to individual topics. Default: 512 tokens, 50-100 overlap. |
 | **4. Token counting**        | Count tokens per chunk for context window budgeting later. |
-| **5. Contextual retrieval**  | LLM adds one-line context summary per chunk before embedding. Captures meaning + position. 49% fewer failed retrievals. |
+| **5. Chunk context enrichment** | LLM adds one-line context summary per chunk before embedding (also known as "contextual retrieval"). Captures meaning + position. 49% fewer failed retrievals. |
 | Embedding & storage
 | **6. Embedding cache check** | Check if this content was already embedded. Hit → reuse vector, skip API call. |
 | **7. Embedding**             | Convert chunk text to vector (array of numbers) representing meaning via embedding API. |
@@ -379,20 +380,65 @@ Chunk 2: "HNSW indexes for fast vector search. They build a layered graph..."
 
 Count tokens in each chunk. Stored as `token_count` on the chunk. Used later when assembling context for the LLM — you need to know how much space each chunk takes to stay within the context window budget.
 
-### Step 5: Contextual Retrieval
+### Step 5: Chunk Context Enrichment (Contextual Retrieval)
 
-LLM generates a one-line context summary per chunk, prepended before embedding.
+#### The problem
+
+When a document gets chunked, each chunk loses its context. A chunk that says "It validates the token and returns the user ID" is meaningful when you're reading the full auth middleware document — you know "it" means the auth middleware. But stored alone as a chunk, "it" could mean anything. The embedding for that chunk is vague, so search struggles to match it to queries like "how does auth validation work?"
+
+#### What chunk context enrichment does
+
+Also known as "contextual retrieval" (Anthropic, 2024). We use "chunk context enrichment" because it more accurately describes the operation — enriching chunks with document context at ingestion time, before embedding. The industry name describes the goal (better retrieval), not the action.
+
+Before embedding each chunk, you send the chunk + the full document to an LLM and ask: "What is this chunk about in the context of the whole document?" The LLM returns a short summary — one or two sentences. That summary gets prepended to the chunk text before embedding.
 
 ```
 Without: "Revenue increased 15% year-over-year..."
 With:    "From Acme Q3 2025 earnings report, financial section: Revenue increased 15%..."
 ```
 
-The embedding now captures both the content meaning AND where it fits in the document. A search for "Acme financial performance" will find this chunk even though the original text never mentions "Acme" or "financial."
+A search for "Acme financial performance" will now find this chunk even though the original text never mentions "Acme" or "financial."
+
+#### How it affects the embedding
+
+The embedder doesn't have prompts. You just concatenate the summary + chunk into one string and pass that string as input. The embedder turns whatever text you give it into a 1536-number vector. It doesn't know or care that the first sentence is a summary and the rest is the original chunk. It just sees one piece of text — and produces a better vector because it had more context to work with.
+
+Think of it like filing a document in a cabinet. Without context, the label says "validates token, returns user ID" — could go in any folder. With context, the label says "auth middleware — validates token, returns user ID" — you know exactly where to file it and exactly when to pull it out.
+
+#### What gets stored
+
+Three separate columns on the chunks table, each serving a different purpose:
+
+| Column            | What it holds                                | Who uses it                    |
+|-------------------|----------------------------------------------|--------------------------------|
+| `context_summary` | The LLM-generated summary alone              | Developers (inspect, regenerate) |
+| `content`         | The original chunk text alone                | The user (what they see in results) |
+| `embedding`       | Vector of the combined summary + chunk text  | Search (finding matches)       |
+
+The user never sees the summary. Search uses the enhanced embedding to find better matches, then returns the original chunk content.
+
+The full document is never embedded as one piece — it's too big. Only chunks get embedded. The summary just enriches each chunk's embedding so it's more findable.
+
+#### What chunk context enrichment does NOT do
+
+- Does not change search logic — same vector search, same keyword search, same RRF fusion
+- Does not help ranking — if the right doc is found at position 5, it stays at position 5 (that's what a reranker fixes)
+- Does not change what the user sees — results still show the original chunk content
+- Does not run at search time — summaries are generated once at ingestion and stored
+
+#### Chunk context enrichment vs reranking
+
+These are complementary, not competing:
+
+- **Chunk context enrichment** makes chunks easier to *find* — improves recall and hit rate
+- **Reranking** makes found results easier to *order* — improves MRR and first-result accuracy
+- They stack: 49% fewer failed retrievals from chunk context enrichment alone, 67% with both combined
+
+#### Impact and cost
 
 **Impact:** 49% fewer failed retrievals. 67% with reranking added.
 
-**Cost:** One LLM call per chunk during ingestion. Not free, but happens once per document (not per search).
+**Cost:** One LLM call per chunk during ingestion. Not free, but the cost is paid once per document write — not per search. Summaries only need regeneration when document content changes (which already triggers re-chunking).
 
 ### Step 6: Embedding Cache Check
 
@@ -867,7 +913,7 @@ Ordered by typical impact (highest first):
 | Lever | What to test | What improves | Typical impact |
 |---|---|---|---|
 | **Reranker** | None vs cross-encoder | Precision, first-result accuracy | Biggest single gain |
-| **Contextual retrieval** | With vs without context prepend | Recall, precision | 49% fewer failed retrievals |
+| **Chunk context enrichment** | With vs without context prepend | Recall, precision | 49% fewer failed retrievals |
 | **Chunking strategy** | Recursive vs semantic vs header-based | All metrics | Varies by content type |
 | **Embedding model** | OpenAI vs Voyage vs BGE-M3 | Precision, cost | Model-dependent |
 | **Chunk size** | 256 vs 512 vs 1024 tokens | Recall | Smaller = more precise, more chunks |
@@ -917,7 +963,7 @@ Ordered by typical impact (highest first):
 1. **Start with defaults** — recursive chunking at 512 tokens, hybrid search, threshold 0.25
 2. **Add eval first** — auto-logging + golden dataset before optimizing anything
 3. **Add reranking** — biggest single improvement, low effort
-4. **Add contextual retrieval** — second biggest improvement, needs LLM calls at ingestion
+4. **Add chunk context enrichment** — second biggest improvement, needs LLM calls at ingestion
 5. **Tune threshold** — use eval data to find the sweet spot
 6. **Experiment with chunk size** — only if eval shows boundary issues
 7. **Try different embedding models** — only if precision is still low after above
@@ -1235,7 +1281,7 @@ If you're starting a new RAG system today, begin with these settings and tune fr
 | Component | Start with |
 |---|---|
 | **Chunking** | Recursive character, 512 tokens, 50-100 overlap |
-| **Enrichment** | Contextual retrieval (LLM context prepend) |
+| **Enrichment** | Chunk context enrichment (LLM context prepend per chunk) |
 | **Embedding** | OpenAI text-embedding-3-small (budget) or Voyage-3-large (quality) |
 | **Vector store** | pgvector + HNSW for < 5M vectors |
 | **Search** | Hybrid: vector + BM25, RRF fusion (k=60) |
@@ -1248,3 +1294,72 @@ If you're starting a new RAG system today, begin with these settings and tune fr
 | **Rate limiting** | Per-agent per-hour caps on searches and writes |
 | **Encryption** | AES-256 at rest, TLS 1.3 in transit |
 | **Backups** | Daily automated database backups |
+
+---
+
+## Ledger Implementation
+
+How Ledger's RAG pipeline maps to the architecture above. Documents what exists, what's planned, and what each piece does.
+
+### Current Pipeline
+
+When a document is saved (`src/lib/documents/operations.ts`):
+
+```
+Document content (e.g. 10,000 chars)
+        │
+  chunkText() — split into pieces (max 2000 chars, 200 char overlap)
+        │
+  for each chunk:
+        │
+        generateEmbedding(chunk.content) — send chunk text to OpenAI
+        │
+        store chunk + embedding in document_chunks table
+```
+
+The full document is stored in the `documents` table as plain text (for keyword search via Postgres `search_vector`). It is never embedded — only chunks are.
+
+- **Vector search** hits chunks (by embedding similarity)
+- **Keyword search** hits documents (by word matching)
+- **Hybrid search** runs both, combines with RRF fusion, returns document IDs
+
+### Chunk Context Enrichment (in progress — Phase 4.5.2)
+
+**Current state:** The `context_summary` column exists on `document_chunks` but is empty. Implementation in progress — see spec `docs/superpowers/specs/2026-04-03-chunking-and-context-enrichment-design.md`.
+
+**Pipeline (being implemented):**
+
+```
+Document content (e.g. 10,000 chars)
+        │
+  chunkText() — recursive split (max 1000 chars, 200 char overlap)
+        │
+  for each chunk:
+        │
+        Send chunk + full document to LLM (gpt-4o-mini)
+        "What is this chunk about in context of the whole document?"
+        │
+        LLM returns: "Auth middleware JWT validation step"
+        │
+        Store summary in context_summary column
+        │
+        Concatenate: "Auth middleware JWT validation step. It validates the token and returns the user ID."
+        │
+        generateEmbedding(combined text) — send to OpenAI
+        │
+        Store embedding (of combined text) in embedding column
+```
+
+**Cost estimate:** One LLM call per chunk per document save. For a 10,000-char document chunked into 10 pieces (at 1000-char chunks), that's 10 LLM calls at ingestion. At gpt-4o-mini pricing (~$0.15/1M input tokens), roughly $0.003 per document. The cost is paid once — not on every search. Summaries only regenerate when document content changes (which already triggers re-chunking).
+
+### Reranking (built, disabled — Phase 4.5.1)
+
+**Current state:** Cohere cross-encoder reranker built and tested (`src/lib/search/reranker.ts`). Disabled due to privacy concern — personal knowledge base data sent to third party. Code remains for future local cross-encoder.
+
+**Eval results with Cohere reranker:** +15.3% first-result accuracy, +10.5% recall, +0.119 MRR, +0.122 NDCG.
+
+**How chunk context enrichment and reranking work together:**
+
+- Chunk context enrichment makes chunks easier to *find* — improves recall and hit rate
+- Reranking makes found results easier to *order* — improves MRR and first-result accuracy
+- They're complementary: 49% fewer failed retrievals from chunk context enrichment alone, 67% with both

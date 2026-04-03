@@ -1335,7 +1335,7 @@ Ordered by typical impact (highest first):
 | Lever                  | What to change                           | What improves                    | Typical impact                   |
 |------------------------|------------------------------------------|----------------------------------|----------------------------------|
 | Reranker               | None vs cross-encoder                    | Precision, first-result accuracy | Biggest single gain              |
-| Contextual retrieval   | With vs without context prepend on chunks | Recall, precision               | ~49% fewer failed retrievals     |
+| Chunk context enrichment | With vs without context prepend on chunks (also known as "contextual retrieval") | Recall, precision               | ~49% fewer failed retrievals     |
 | Chunking strategy      | Paragraph vs recursive vs semantic       | All metrics                      | Varies by content type           |
 | Embedding model        | OpenAI vs Voyage vs BGE-M3              | Precision, cost                  | Model-dependent                  |
 | Chunk size             | 256 vs 512 vs 1024 tokens               | Recall                           | Smaller = more precise           |

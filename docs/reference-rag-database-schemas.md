@@ -115,7 +115,7 @@ Search index derived from documents. Each document has 1+ chunks with embeddings
 | Content
 | `content`            | The chunk text that gets embedded |
 | `content_type`       | What kind of content: text, code_block, table_extraction, transcript |
-| `context_summary`    | LLM-generated context prepend (contextual retrieval) |
+| `context_summary`    | LLM-generated context prepend — chunk context enrichment (also known as contextual retrieval) |
 | `token_count`        | Token count for context window budgeting |
 | Embedding
 | `embedding`          | Array of numbers representing meaning (vector) |
@@ -135,7 +135,7 @@ CREATE TABLE document_chunks (
   embedding_model_id text      REFERENCES embedding_models(id),
   chunk_strategy  text,                                  -- paragraph, recursive, semantic, forced
   overlap_chars   int          NOT NULL DEFAULT 0,       -- chars shared with previous chunk
-  context_summary text,                                  -- LLM-generated context prepend (contextual retrieval)
+  context_summary text,                                  -- LLM-generated context prepend (chunk context enrichment)
   token_count     int,                                   -- for context window budgeting
   content_type    text         NOT NULL DEFAULT 'text',  -- text, code_block, table_extraction, transcript
   created_at      timestamptz  NOT NULL DEFAULT now(),

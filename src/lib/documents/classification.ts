@@ -18,8 +18,15 @@ export type DocumentStatus = 'idea' | 'planning' | 'active' | 'done';
 export type SourceType = 'text' | 'pdf' | 'docx' | 'spreadsheet' | 'code' | 'image' | 'audio' | 'video' | 'web' | 'email' | 'slides' | 'handwriting';
 
 // Chunk metadata types — stored on document_chunks table
-export type ChunkStrategy = 'header' | 'paragraph' | 'sentence' | 'semantic' | 'forced';
+export type ChunkStrategy = 'header' | 'paragraph' | 'sentence' | 'semantic' | 'forced' | 'recursive';
 export type ChunkContentType = 'text' | 'image_description' | 'table_extraction' | 'code_block' | 'transcript' | 'slide_text';
+
+// Chunking configuration — controls how text is split before embedding
+export interface IChunkConfigProps {
+  maxChunkSize: number;    // max chars per chunk (default: 1000)
+  overlapChars: number;    // chars shared between adjacent chunks (default: 200)
+  strategy: ChunkStrategy; // splitting algorithm (default: 'recursive')
+}
 
 // =============================================================================
 // Document interfaces — match the documents table columns
@@ -132,9 +139,19 @@ export interface ISupabaseClientProps {
   rpc: (functionName: string, params: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
 }
 
-// OpenAI client — structural type covering embedding generation
+// OpenAI client — structural type covering embedding generation and chat completions.
+// Chat is used for chunk context enrichment (generating context summaries per chunk).
+// The chat type uses PromiseLike (not Promise) because the real OpenAI SDK returns
+// APIPromise which is thenable but not a strict Promise. Same pattern we use for
+// Supabase RPC calls.
 export interface IOpenAIClientProps {
   embeddings: { create: (params: { model: string; input: string }) => Promise<{ data: Array<{ embedding: number[] }> }> };
+  chat: {
+    completions: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      create: (...args: any[]) => PromiseLike<{ choices: Array<{ message: { content: string | null } }> }>;
+    };
+  };
 }
 
 // Combined clients — passed to functions that need both database and AI
