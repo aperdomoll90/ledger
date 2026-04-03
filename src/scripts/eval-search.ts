@@ -12,7 +12,7 @@ import type { IClientsProps } from '../lib/documents/classification.js';
 import { searchHybrid } from '../lib/search/ai-search.js';
 import { scoreTestCase, computeMetrics, formatReport, compareRuns, formatComparison } from '../lib/eval/eval.js';
 import type { IGoldenTestCaseProps, ITestResultProps } from '../lib/eval/eval.js';
-import { saveEvalRun, loadPreviousRun } from '../lib/eval/eval-store.js';
+import { saveEvalRun, loadPreviousRun, CURRENT_SEARCH_CONFIG } from '../lib/eval/eval-store.js';
 import { computeConfidenceIntervals, computeScoreCalibration, computeCoverageAnalysis, formatAdvancedReport } from '../lib/eval/eval-advanced.js';
 
 // =============================================================================
@@ -33,18 +33,7 @@ const clients: IClientsProps = {
   openai: new OpenAI({ apiKey: openaiKey }),
 };
 
-// =============================================================================
-// Search config — snapshot saved with each run for reproducibility
-// =============================================================================
-
-const SEARCH_CONFIG = {
-  threshold:       0.25,
-  reciprocalRankFusionK: 60,
-  embedding_model: 'openai/text-embedding-3-small',
-  limit:           10,
-  chunking:        'paragraph',
-  reranker:        'none',
-};
+// Search config imported from eval-store.ts (single source of truth)
 
 // =============================================================================
 // Run eval
@@ -97,40 +86,45 @@ async function runEval(): Promise<void> {
   const metrics = computeMetrics(results);
   console.log('\n' + formatReport(metrics));
 
+  // Compute advanced analysis before saving so everything is persisted
+  const confidenceIntervals = computeConfidenceIntervals(results);
+  const scoreCalibration = computeScoreCalibration(results);
+  const coverageAnalysis = computeCoverageAnalysis(results);
+
   const runId = await saveEvalRun(clients.supabase, {
     metrics,
-    config: SEARCH_CONFIG,
+    config: CURRENT_SEARCH_CONFIG,
     results,
+    confidenceIntervals,
+    scoreCalibration,
+    coverageAnalysis,
   });
   console.log(`\nRun saved to eval_runs (id: ${runId})`);
 
   if (previousRun) {
     const comparison = compareRuns(
       {
-        hitRate:             metrics.hitRate,
-        firstResultAccuracy: metrics.firstResultAccuracy,
-        recall:              metrics.recall,
-        zeroResultRate:      metrics.zeroResultRate,
-        meanReciprocalRank:  metrics.meanReciprocalRank,
-        normalizedDiscountedCumulativeGain:             metrics.normalizedDiscountedCumulativeGain,
-        avgResponseTimeMs:   metrics.avgResponseTimeMs,
+        hitRate:                              metrics.hitRate,
+        firstResultAccuracy:                 metrics.firstResultAccuracy,
+        recall:                              metrics.recall,
+        zeroResultRate:                      metrics.zeroResultRate,
+        meanReciprocalRank:                  metrics.meanReciprocalRank,
+        normalizedDiscountedCumulativeGain:  metrics.normalizedDiscountedCumulativeGain,
+        avgResponseTimeMs:                   metrics.avgResponseTimeMs,
       },
       {
-        hitRate:             previousRun.hit_rate,
-        firstResultAccuracy: previousRun.first_result_accuracy,
-        recall:              previousRun.recall,
-        zeroResultRate:      previousRun.zero_result_rate,
-        meanReciprocalRank:  0, // Previous runs before MRR was added won't have it
-        normalizedDiscountedCumulativeGain:             0, // Previous runs before NDCG was added won't have it
-        avgResponseTimeMs:   previousRun.avg_response_time_ms,
+        hitRate:                              previousRun.hit_rate,
+        firstResultAccuracy:                 previousRun.first_result_accuracy,
+        recall:                              previousRun.recall,
+        zeroResultRate:                      previousRun.zero_result_rate,
+        meanReciprocalRank:                  previousRun.mean_reciprocal_rank ?? 0,
+        normalizedDiscountedCumulativeGain:  previousRun.normalized_discounted_cumulative_gain ?? 0,
+        avgResponseTimeMs:                   previousRun.avg_response_time_ms,
       },
     );
     console.log('\n' + formatComparison(comparison));
   }
 
-  const confidenceIntervals = computeConfidenceIntervals(results);
-  const scoreCalibration = computeScoreCalibration(results);
-  const coverageAnalysis = computeCoverageAnalysis(results);
   console.log('\n' + formatAdvancedReport(confidenceIntervals, scoreCalibration, coverageAnalysis));
 }
 

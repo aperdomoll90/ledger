@@ -485,35 +485,45 @@ CREATE TABLE eval_golden_dataset (
 
 Stored results from each golden dataset evaluation run. Tracks improvement over time.
 
-| Column                 | Type         | Nullable | Default        | Purpose                                              |
-|------------------------|--------------|----------|----------------|------------------------------------------------------|
-| `id`                   | bigserial    | NO       | auto           | Primary key                                          |
-| `run_date`             | timestamptz  | NO       | now()          | When this eval was executed                          |
-| `config`               | jsonb        | NO       |                | Settings snapshot: threshold, chunking, model, RRF k |
-| `test_case_count`      | integer      | NO       |                | Number of test cases run                             |
-| `hit_rate`             | float        | NO       |                | % queries that found at least one expected doc       |
-| `first_result_accuracy`| float        | NO       |                | % queries where #1 result was correct                |
-| `recall`               | float        | NO       |                | % expected docs actually found                       |
-| `zero_result_rate`     | float        | NO       |                | % queries that returned nothing                      |
-| `avg_response_time_ms` | float        | NO       |                | Average search latency                               |
-| `results_by_tag`       | jsonb        | YES      |                | Per-tag breakdown {tag: {total, hits, firstHits}}    |
-| `missed_queries`       | jsonb        | YES      |                | Failed queries: {query, expected, got}               |
-| `per_query_results`    | jsonb        | YES      |                | Full detail for every test case                      |
+| Column                                  | Type         | Nullable | Default | Purpose                                                   |
+|-----------------------------------------|--------------|----------|---------|-----------------------------------------------------------|
+| `id`                                    | bigserial    | NO       | auto    | Primary key                                               |
+| `run_date`                              | timestamptz  | NO       | now()   | When this eval was executed                               |
+| `config`                                | jsonb        | NO       |         | Settings snapshot: threshold, chunking, model, RRF k      |
+| `test_case_count`                       | integer      | NO       |         | Number of test cases run                                  |
+| `hit_rate`                              | float        | NO       |         | % queries that found at least one expected doc            |
+| `first_result_accuracy`                 | float        | NO       |         | % queries where #1 result was correct                     |
+| `recall`                                | float        | NO       |         | % expected docs actually found                            |
+| `zero_result_rate`                      | float        | NO       |         | % queries that returned nothing                           |
+| `avg_response_time_ms`                  | float        | NO       |         | Average search latency                                    |
+| `mean_reciprocal_rank`                  | float        | YES      |         | Where the first correct doc ranks (1/position)            |
+| `normalized_discounted_cumulative_gain` | float        | YES      |         | How well all relevant docs are ranked (0-1)               |
+| `confidence_intervals`                  | jsonb        | YES      |         | 95% CI for all metrics (bootstrap, point/lower/upper/width) |
+| `score_calibration`                     | jsonb        | YES      |         | Relevant vs irrelevant score distributions + separation   |
+| `coverage_analysis`                     | jsonb        | YES      |         | Queries per tag, unique docs tested, undertested flags    |
+| `results_by_tag`                        | jsonb        | YES      |         | Per-tag breakdown {tag: {total, hits, firstHits}}         |
+| `missed_queries`                        | jsonb        | YES      |         | Failed queries: {query, tags, expected, got, gotScores}                 |
+| `per_query_results`                     | jsonb        | YES      |         | Full detail: {query, tags, expectedDocIds, hit, position, reciprocalRank, NDCG, returnedIds, returnedScores} |
 
 ```sql
 CREATE TABLE eval_runs (
-  id                    bigserial       PRIMARY KEY,
-  run_date              timestamptz     NOT NULL DEFAULT now(),
-  config                jsonb           NOT NULL,
-  test_case_count       integer         NOT NULL,
-  hit_rate              double precision NOT NULL,
-  first_result_accuracy double precision NOT NULL,
-  recall                double precision NOT NULL,
-  zero_result_rate      double precision NOT NULL,
-  avg_response_time_ms  double precision NOT NULL,
-  results_by_tag        jsonb,
-  missed_queries        jsonb,
-  per_query_results     jsonb
+  id                                    bigserial        PRIMARY KEY,
+  run_date                              timestamptz      NOT NULL DEFAULT now(),
+  config                                jsonb            NOT NULL,
+  test_case_count                       integer          NOT NULL,
+  hit_rate                              double precision NOT NULL,
+  first_result_accuracy                 double precision NOT NULL,
+  recall                                double precision NOT NULL,
+  zero_result_rate                      double precision NOT NULL,
+  avg_response_time_ms                  double precision NOT NULL,
+  mean_reciprocal_rank                  double precision,
+  normalized_discounted_cumulative_gain double precision,
+  confidence_intervals                  jsonb,
+  score_calibration                     jsonb,
+  coverage_analysis                     jsonb,
+  results_by_tag                        jsonb,
+  missed_queries                        jsonb,
+  per_query_results                     jsonb
 );
 ```
 

@@ -39,6 +39,7 @@ const sampleMetrics: IEvalMetricsProps = {
   zeroResultRate: 12.5,
   outOfScopeAccuracy: 100.0,
   meanReciprocalRank: 0.75,
+  normalizedDiscountedCumulativeGain: 0.80,
   tagStats: { search: { total: 4, hits: 3, firstHits: 2 } },
   missed: [],
 };
@@ -54,6 +55,7 @@ const sampleResult: ITestResultProps = {
   position: 0,
   responseTimeMs: 110,
   reciprocalRank: 1.0,
+  normalizedDiscountedCumulativeGain: 1.0,
 };
 
 const sampleConfig = { threshold: 0.4, reciprocalRankFusionK: 60, embedding_model: 'text-embedding-3-small' };
@@ -79,6 +81,8 @@ describe('saveEvalRun', () => {
         recall: sampleMetrics.recall,
         zero_result_rate: sampleMetrics.zeroResultRate,
         avg_response_time_ms: sampleMetrics.avgResponseTimeMs,
+        mean_reciprocal_rank: sampleMetrics.meanReciprocalRank,
+        normalized_discounted_cumulative_gain: sampleMetrics.normalizedDiscountedCumulativeGain,
       }),
     );
     expect(supabase._chain.select).toHaveBeenCalledWith('id');
@@ -97,10 +101,22 @@ describe('saveEvalRun', () => {
     const insertedRow = supabase._chain.insert.mock.calls[0][0];
     expect(insertedRow.results_by_tag).toEqual(sampleMetrics.tagStats);
     expect(insertedRow.missed_queries).toEqual(
-      sampleMetrics.missed.map(missedResult => ({ query: missedResult.testCase.query, expected: missedResult.testCase.expected_doc_ids, got: missedResult.returnedIds })),
+      sampleMetrics.missed.map(missedResult => ({
+        query: missedResult.testCase.query,
+        tags: missedResult.testCase.tags,
+        expected: missedResult.testCase.expected_doc_ids,
+        got: missedResult.returnedIds,
+        gotScores: missedResult.returnedScores,
+      })),
     );
     expect(insertedRow.per_query_results).toHaveLength(1);
-    expect(insertedRow.per_query_results[0]).toMatchObject({ query: sampleResult.testCase.query });
+    expect(insertedRow.per_query_results[0]).toMatchObject({
+      query: sampleResult.testCase.query,
+      tags: sampleResult.testCase.tags,
+      expectedDocIds: sampleResult.testCase.expected_doc_ids,
+      normalizedDiscountedCumulativeGain: sampleResult.normalizedDiscountedCumulativeGain,
+      returnedScores: sampleResult.returnedScores,
+    });
   });
 
   it('throws on database error', async () => {

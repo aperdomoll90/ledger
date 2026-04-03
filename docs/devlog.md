@@ -1603,8 +1603,18 @@ Key findings: exact-term strong (100% hit), conceptual weak (77% hit, 31% first-
 
 ### Test Count: 145 (was 125 at start of 4.6)
 
+### Eval Audit & Data Fixes (continued)
+- Audited all eval code — identified 7 issues, fixed 3 immediately
+- Enriched `per_query_results` JSONB — added NDCG, returnedScores, tags, expectedDocIds (stored runs now self-contained)
+- Enriched `missed_queries` JSONB — added gotScores and tags (can distinguish ranking vs relevance failures)
+- Extracted `CURRENT_SEARCH_CONFIG` to `eval-store.ts` — single source of truth for script + CLI
+- Added `mean_reciprocal_rank`, `normalized_discounted_cumulative_gain`, `confidence_intervals`, `score_calibration`, `coverage_analysis` columns to `eval_runs` table (SQL ran in Supabase)
+- Updated `saveEvalRun()` to persist all new columns + enriched JSONB
+- Updated `loadPreviousRun()` comparison to use real MRR/NDCG from stored runs (was hardcoded 0)
+- Verified run 5 in Supabase — all 15 columns populated correctly
+- Updated schema doc + test assertions
+
 ### Next Session
-1. Commit all Phase 4.6 changes
-2. Update Ledger architecture docs (typescript module map, RAG features)
-3. Add RLS policies to `eval_runs` table
-4. Phase 4.5: Start tuning (reranker first — score calibration confirms this is the right lever)
+1. Commit all remaining changes
+2. Add RLS policies to `eval_runs` table
+3. Phase 4.5: Start tuning (reranker first — score calibration confirms poor separation)
