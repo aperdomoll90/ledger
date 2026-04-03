@@ -99,6 +99,7 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
         recall:              metrics.recall,
         zeroResultRate:      metrics.zeroResultRate,
         meanReciprocalRank:  metrics.meanReciprocalRank,
+        ndcgAtK:             metrics.ndcgAtK,
         avgResponseTimeMs:   metrics.avgResponseTimeMs,
       },
       {
@@ -107,6 +108,7 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
         recall:              previousRun.recall,
         zeroResultRate:      previousRun.zero_result_rate,
         meanReciprocalRank:  0, // Previous runs before MRR was added won't have it
+        ndcgAtK:             0, // Previous runs before NDCG was added won't have it
         avgResponseTimeMs:   previousRun.avg_response_time_ms,
       },
     );

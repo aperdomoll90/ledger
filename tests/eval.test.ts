@@ -158,6 +158,98 @@ describe('formatReport — MRR line', () => {
 });
 
 // =============================================================================
+// scoreTestCase — ndcgAtK
+// =============================================================================
+
+describe('scoreTestCase — ndcgAtK', () => {
+  it('perfect ranking (all expected at top) → NDCG 1.0', () => {
+    // expected: [10, 20]. Results: [10, 20, 99]. Both expected docs at positions 0 and 1.
+    // DCG = 1/log2(2) + 1/log2(3) = 1.0 + 0.6309 = 1.6309
+    // IDCG = 1/log2(2) + 1/log2(3) = 1.6309
+    // NDCG = 1.0
+    const testCase = makeTestCase([10, 20]);
+    const results = [makeResult(10), makeResult(20), makeResult(99)];
+    const scored = scoreTestCase(testCase, results, 100);
+    expect(scored.ndcgAtK).toBeCloseTo(1.0);
+  });
+
+  it('imperfect ranking (expected docs not at top) → NDCG ≈ 0.6934', () => {
+    // expected: [10]. Results: [99, 88, 10]. Expected doc at position 2.
+    // DCG = 0/log2(2) + 0/log2(3) + 1/log2(4) = 0 + 0 + 0.5 = 0.5
+    // IDCG = 1/log2(2) = 1.0
+    // NDCG = 0.5 / 1.0 = 0.5
+    // Correction: expected [10, 20], results [99, 10, 88, 20, 77]
+    // DCG = 0/log2(2) + 1/log2(3) + 0/log2(4) + 1/log2(5)
+    //     = 0 + 0.6309 + 0 + 0.4307 = 1.0616
+    // IDCG = 1/log2(2) + 1/log2(3) = 1.0 + 0.6309 = 1.6309
+    // NDCG = 1.0616 / 1.6309 ≈ 0.6509 ... not quite 0.6934
+    // Use: expected [10], results [99, 10]. Position 1.
+    // DCG = 0 + 1/log2(3) = 0.6309
+    // IDCG = 1/log2(2) = 1.0
+    // NDCG = 0.6309 — close to 0.6309, not 0.6934
+    // Use: expected [10, 20], results [99, 10, 20].
+    // DCG = 0 + 1/log2(3) + 1/log2(4) = 0.6309 + 0.5 = 1.1309
+    // IDCG = 1/log2(2) + 1/log2(3) = 1.0 + 0.6309 = 1.6309
+    // NDCG = 1.1309 / 1.6309 ≈ 0.6934
+    const testCase = makeTestCase([10, 20]);
+    const results = [makeResult(99), makeResult(10), makeResult(20)];
+    const scored = scoreTestCase(testCase, results, 100);
+    expect(scored.ndcgAtK).toBeCloseTo(0.6934, 3);
+  });
+
+  it('no expected docs found → NDCG 0', () => {
+    const testCase = makeTestCase([42]);
+    const results = [makeResult(1), makeResult(2), makeResult(3)];
+    const scored = scoreTestCase(testCase, results, 100);
+    expect(scored.ndcgAtK).toBe(0);
+  });
+
+  it('out-of-scope → NDCG 0', () => {
+    const testCase = makeTestCase([]);
+    const results: ISearchResultProps[] = [];
+    const scored = scoreTestCase(testCase, results, 100);
+    expect(scored.ndcgAtK).toBe(0);
+  });
+
+  it('single expected doc at position 0 → NDCG 1.0', () => {
+    const testCase = makeTestCase([42]);
+    const results = [makeResult(42), makeResult(7)];
+    const scored = scoreTestCase(testCase, results, 100);
+    expect(scored.ndcgAtK).toBeCloseTo(1.0);
+  });
+});
+
+// =============================================================================
+// computeMetrics — ndcgAtK
+// =============================================================================
+
+describe('computeMetrics — ndcgAtK', () => {
+  it('averages NDCG across normal results', () => {
+    const results: ITestResultProps[] = [
+      // perfect: NDCG = 1.0
+      scoreTestCase(makeTestCase([10]), [makeResult(10)], 50),
+      // miss: NDCG = 0
+      scoreTestCase(makeTestCase([20]), [makeResult(1), makeResult(2)], 50),
+    ];
+    const metrics = computeMetrics(results);
+    // (1.0 + 0) / 2 = 0.5
+    expect(metrics.ndcgAtK).toBeCloseTo(0.5);
+  });
+
+  it('excludes out-of-scope from NDCG average', () => {
+    const results: ITestResultProps[] = [
+      // normal: perfect → NDCG = 1.0
+      scoreTestCase(makeTestCase([10]), [makeResult(10)], 50),
+      // out-of-scope: NDCG = 0 but should be excluded from denominator
+      scoreTestCase(makeTestCase([]), [], 50),
+    ];
+    const metrics = computeMetrics(results);
+    // Only 1 normal result; NDCG = 1.0 / 1 = 1.0
+    expect(metrics.ndcgAtK).toBeCloseTo(1.0);
+  });
+});
+
+// =============================================================================
 // Helpers for compareRuns / formatComparison
 // =============================================================================
 
@@ -168,6 +260,7 @@ function makeComparableMetrics(overrides: Partial<IComparableMetricsProps> = {})
     recall: 80,
     zeroResultRate: 5,
     meanReciprocalRank: 0.75,
+    ndcgAtK: 0.8,
     avgResponseTimeMs: 200,
     ...overrides,
   };

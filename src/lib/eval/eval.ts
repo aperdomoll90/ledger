@@ -26,6 +26,7 @@ export interface ITestResultProps {
   position: number | null;
   responseTimeMs: number;
   reciprocalRank: number;
+  ndcgAtK: number;
 }
 
 export interface IEvalMetricsProps {
@@ -45,8 +46,36 @@ export interface IEvalMetricsProps {
   zeroResultRate: number;
   outOfScopeAccuracy: number;
   meanReciprocalRank: number;
+  ndcgAtK: number;
   tagStats: Record<string, { total: number; hits: number; firstHits: number }>;
   missed: ITestResultProps[];
+}
+
+// =============================================================================
+// NDCG@k helper
+// =============================================================================
+
+function computeNdcgAtK(returnedIds: number[], expectedDocIds: number[]): number {
+  if (expectedDocIds.length === 0) return 0;
+
+  // DCG: sum of relevance / log2(position + 2) for each returned result
+  // Binary relevance: 1 if doc is expected, 0 otherwise
+  // Position is 0-indexed, add 2 to avoid log2(1) = 0
+  let discountedCumulativeGain = 0;
+  for (let position = 0; position < returnedIds.length; position++) {
+    const relevance = expectedDocIds.includes(returnedIds[position]) ? 1 : 0;
+    discountedCumulativeGain += relevance / Math.log2(position + 2);
+  }
+
+  // IDCG: ideal DCG if all expected docs were ranked first
+  let idealDiscountedCumulativeGain = 0;
+  const idealCount = Math.min(expectedDocIds.length, returnedIds.length);
+  for (let position = 0; position < idealCount; position++) {
+    idealDiscountedCumulativeGain += 1 / Math.log2(position + 2);
+  }
+
+  if (idealDiscountedCumulativeGain === 0) return 0;
+  return discountedCumulativeGain / idealDiscountedCumulativeGain;
 }
 
 // =============================================================================
@@ -74,6 +103,7 @@ export function scoreTestCase(
       position: null,
       responseTimeMs,
       reciprocalRank: 0,
+      ndcgAtK: 0,
     };
   }
 
@@ -97,6 +127,7 @@ export function scoreTestCase(
     position: firstExpectedPosition,
     responseTimeMs,
     reciprocalRank: firstExpectedPosition !== null ? 1 / (firstExpectedPosition + 1) : 0,
+    ndcgAtK: computeNdcgAtK(returnedIds, testCase.expected_doc_ids),
   };
 }
 
@@ -148,6 +179,9 @@ export function computeMetrics(results: ITestResultProps[]): IEvalMetricsProps {
     meanReciprocalRank: totalNormal > 0
       ? normalResults.reduce((sum, result) => sum + result.reciprocalRank, 0) / totalNormal
       : 0,
+    ndcgAtK: totalNormal > 0
+      ? normalResults.reduce((sum, result) => sum + result.ndcgAtK, 0) / totalNormal
+      : 0,
     tagStats,
     missed: normalResults.filter(result => !result.hit),
   };
@@ -174,6 +208,7 @@ export function formatReport(metrics: IEvalMetricsProps): string {
   lines.push(`  Out-of-scope accuracy: ${metrics.outOfScopeAccuracy.toFixed(1)}% (${metrics.outOfScopeCorrect}/${metrics.outOfScopeCases} correctly returned nothing)`);
   lines.push(`  Avg response time:     ${metrics.avgResponseTimeMs.toFixed(0)}ms`);
   lines.push(`  MRR:                   ${metrics.meanReciprocalRank.toFixed(3)} (1.0 = perfect ranking, 0.5 = avg position 2)`);
+  lines.push(`  NDCG@k:                ${metrics.ndcgAtK.toFixed(3)} (1.0 = perfect ranking of all relevant docs)`);
   lines.push('');
 
   if (metrics.missed.length > 0) {
@@ -224,6 +259,7 @@ export interface IComparableMetricsProps {
   recall: number;
   zeroResultRate: number;
   meanReciprocalRank: number;
+  ndcgAtK: number;
   avgResponseTimeMs: number;
 }
 
@@ -244,6 +280,7 @@ export function compareRuns(
     'recall',
     'zeroResultRate',
     'meanReciprocalRank',
+    'ndcgAtK',
     'avgResponseTimeMs',
   ];
 
@@ -316,7 +353,7 @@ function determineSeverity(
 const PERCENTAGE_METRICS = new Set(['hitRate', 'firstResultAccuracy', 'recall', 'zeroResultRate']);
 
 function formatMetricValue(metricKey: string, value: number): string {
-  if (metricKey === 'meanReciprocalRank') return value.toFixed(3);
+  if (metricKey === 'meanReciprocalRank' || metricKey === 'ndcgAtK') return value.toFixed(3);
   if (PERCENTAGE_METRICS.has(metricKey)) return `${value.toFixed(1)}%`;
   return value.toFixed(1);
 }
