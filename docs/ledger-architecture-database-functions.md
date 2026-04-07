@@ -328,20 +328,29 @@ CREATE OR REPLACE FUNCTION public.match_documents(
 ) LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
-  SELECT DISTINCT ON (n.id)
-    n.id, n.content, n.name, n.domain, n.document_type,
-    n.project, n.protection, n.description, n.agent, n.status,
-    n.file_path, n.skill_ref, n.owner_type, n.owner_id,
-    n.is_auto_load, n.content_hash,
-    (1 - (c.embedding <=> q_emb))::float AS similarity
-  FROM document_chunks c
-  JOIN documents n ON n.id = c.document_id
-  WHERE n.deleted_at IS NULL
-    AND 1 - (c.embedding <=> q_emb) > p_threshold
-    AND (p_domain IS NULL OR c.domain = p_domain)
-    AND (p_document_type IS NULL OR n.document_type = p_document_type)
-    AND (p_project IS NULL OR n.project = p_project)
-  ORDER BY n.id, similarity DESC
+  SELECT
+    deduped.id, deduped.content, deduped.name, deduped.domain, deduped.document_type,
+    deduped.project, deduped.protection, deduped.description, deduped.agent, deduped.status,
+    deduped.file_path, deduped.skill_ref, deduped.owner_type, deduped.owner_id,
+    deduped.is_auto_load, deduped.content_hash,
+    deduped.similarity
+  FROM (
+    SELECT DISTINCT ON (n.id)
+      n.id, n.content, n.name, n.domain, n.document_type,
+      n.project, n.protection, n.description, n.agent, n.status,
+      n.file_path, n.skill_ref, n.owner_type, n.owner_id,
+      n.is_auto_load, n.content_hash,
+      (1 - (c.embedding <=> q_emb))::float AS similarity
+    FROM document_chunks c
+    JOIN documents n ON n.id = c.document_id
+    WHERE n.deleted_at IS NULL
+      AND 1 - (c.embedding <=> q_emb) > p_threshold
+      AND (p_domain IS NULL OR c.domain = p_domain)
+      AND (p_document_type IS NULL OR n.document_type = p_document_type)
+      AND (p_project IS NULL OR n.project = p_project)
+    ORDER BY n.id, (c.embedding <=> q_emb)
+  ) deduped
+  ORDER BY deduped.similarity DESC
   LIMIT p_max_results;
 END;
 $$;
@@ -395,10 +404,10 @@ CREATE OR REPLACE FUNCTION public.match_documents_hybrid(
 ) LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
-  WITH vector_results AS (
+  WITH vector_ranked AS (
     SELECT DISTINCT ON (n.id)
       n.id AS document_id,
-      ROW_NUMBER() OVER (ORDER BY (c.embedding <=> q_emb)) AS rank
+      (c.embedding <=> q_emb) AS distance
     FROM document_chunks c
     JOIN documents n ON n.id = c.document_id
     WHERE n.deleted_at IS NULL
@@ -407,6 +416,13 @@ BEGIN
       AND (p_document_type IS NULL OR n.document_type = p_document_type)
       AND (p_project IS NULL OR n.project = p_project)
     ORDER BY n.id, (c.embedding <=> q_emb)
+  ),
+  vector_results AS (
+    SELECT
+      vr.document_id,
+      ROW_NUMBER() OVER (ORDER BY vr.distance) AS rank
+    FROM vector_ranked vr
+    ORDER BY vr.distance
     LIMIT p_max_results * 2
   ),
   keyword_results AS (

@@ -1741,8 +1741,57 @@ Designed, planned, and implemented two complementary improvements to the ingesti
 ### Test Count: 126 (project tests, 12 test files)
 
 ### Next Session
-1. Commit all changes
-2. Update Ledger docs (reference docs already updated)
-3. Phase 4.5.5: Semantic cache — use HNSW on query_cache for fuzzy query matching
-4. Phase 4.7: Multi-format ingestion (PDF, audio)
-5. Investigate: 6 missed queries — are expected_doc_ids correct or do golden dataset entries need fixing?
+1. Phase 4.5.5: Semantic cache — use HNSW on query_cache for fuzzy query matching instead of exact text match
+2. Phase 4.6.2: Graded relevance — upgrade golden dataset from binary (found/not found) to 0/1/2 scoring for more nuanced eval
+3. Phase 4.7: Multi-format ingestion — PDF, audio, images via ingestion_queue table
+4. Investigate: 6 missed queries — are expected_doc_ids correct or do golden dataset entries need fixing?
+
+---
+
+## Session 34 — 2026-04-03
+
+### DISTINCT ON Ordering Bug Fix (Critical)
+- **Discovered and fixed** a PostgreSQL `DISTINCT ON` ordering bug in `match_documents` and `match_documents_hybrid`
+- **Root cause:** `DISTINCT ON (n.id)` forces `ORDER BY n.id` as leading sort column. When `LIMIT` was applied in the same query, results were clipped by document ID order, not similarity. Documents with high IDs (e.g. #137-141 architecture docs) were systematically invisible.
+- **Fix:** Two-step query pattern — inner subquery deduplicates with DISTINCT ON (forced ID ordering), outer query re-sorts by similarity DESC and applies LIMIT
+- **Impact:** All 6 "missed" queries from run 11 traced back to this bug. Run 12 after fix: 5 missed queries remain (1 resolved, 4 are genuine retrieval gaps)
+- SQL deployed to Supabase manually by Adrian
+
+### Eval Run 12 (post-fix)
+
+| Metric              | Run 11 (before) | Run 12 (after) | Change    |
+|---------------------|-----------------|----------------|-----------|
+| Hit rate            | 95.5%           | **96.2%**      | +0.8%     |
+| First-result        | 64.7%           | **65.4%**      | +0.8%     |
+| Recall              | 77.6%           | **79.3%**      | +1.7%     |
+| MRR                 | 0.747           | **0.756**      | +0.009    |
+| NDCG                | 0.759           | **0.764**      | +0.005    |
+| Missed queries      | 6               | **5**          | -1        |
+
+### Remaining 5 Missed Queries (genuine retrieval gaps)
+1. "how to protect sensitive documents" — expected [141, 137], got [144, 149]
+2. "websearch_to_tsquery tsvector GIN" — expected [138, 139], got [22, 149, 144, 137, 140]
+3. "what are Adrian's strengths and weaknesses as a developer" — expected [7, 8], got [52, 16, 119, 33, 15]
+4. "how does Ledger prevent data loss during updates" — expected [139, 138], got [28, 112, 149, 22, 19]
+5. "all system rules and sync rules" — expected [25, 30, 34, 36, 107, 116], got [135, 126, 129, 26, 100]
+
+### Phase 4.7 Multi-Format Ingestion — Research Saved
+- Researched provider plugin architecture, library picks for all 11 source_types
+- Saved to Ledger #150 (`ledger-phase-4-7-multi-format-ingestion-research`)
+- **Deferred to end of v2** — retrieval quality improvements have higher ROI
+
+### Documentation Updates
+- `docs/ledger-architecture-database-functions.md` — updated SQL for both search functions
+- `docs/reference-rag-database-schemas.md` — added DISTINCT ON pitfall warning
+- Ledger #137 (architecture overview) — threshold 0.25→0.38, function count 15→17, added RAG pipeline + evaluation sections, current baseline
+- Ledger #139 (database functions) — added deduplication pattern note, updated descriptions
+
+### Key Decisions
+- Two-step DISTINCT ON deduplication is the correct Postgres pattern for chunk→document search
+- Phase 4.7 multi-format ingestion deferred — provider plugin architecture researched and saved for later
+- Remaining 5 missed queries are genuine retrieval gaps, not stale labels or ordering bugs
+
+### Next Session
+1. Phase 4.5.5: Semantic cache — HNSW fuzzy query matching on query_cache
+2. Phase 4.6.2: Graded relevance — upgrade golden dataset from binary to 0/1/2 scoring
+3. Investigate remaining 5 missed queries — may need query reformulation or golden dataset label fixes

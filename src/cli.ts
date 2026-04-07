@@ -14,6 +14,7 @@ import { init } from './commands/init.js';
 import { addDocument } from './commands/add.js';
 import { list } from './commands/list.js';
 import { show } from './commands/show.js';
+import { get } from './commands/get.js';
 import { exportDocument } from './commands/export.js';
 import { push } from './commands/push.js';
 import { update } from './commands/update.js';
@@ -80,6 +81,14 @@ program
       type: options.type,
       project: options.project,
     });
+  });
+
+program
+  .command('get <name>')
+  .description('Fetch a document by exact name and print its content')
+  .action(async (name) => {
+    const config = loadConfig();
+    await get(config, name);
   });
 
 program

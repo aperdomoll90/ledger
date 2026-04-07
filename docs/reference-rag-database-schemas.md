@@ -694,6 +694,11 @@ Vector search — find chunks by embedding similarity, return documents.
 -- Returns: TABLE with document columns + similarity float
 ```
 
+**DISTINCT ON pitfall:** When deduplicating chunks to one-per-document, PostgreSQL's
+`DISTINCT ON (doc_id)` forces `ORDER BY doc_id` as the leading sort column. If you apply
+`LIMIT` in the same query, results are clipped by document ID order, not similarity.
+Fix: wrap `DISTINCT ON` in a subquery, then sort by similarity and limit in the outer query.
+
 #### match_documents_keyword
 
 Keyword search — find documents by full-text matching.

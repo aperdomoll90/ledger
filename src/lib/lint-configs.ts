@@ -66,6 +66,26 @@ export default [
   {
     rules: {
       'no-warning-comments': ['warn', { terms: ['TODO', 'FIXME', 'HACK'] }],
+      '@typescript-eslint/naming-convention': [
+        'error',
+        {
+          selector: 'interface',
+          format: ['PascalCase'],
+          prefix: ['I'],
+        },
+        {
+          selector: 'variable',
+          format: ['camelCase', 'UPPER_CASE', 'PascalCase'],
+          filter: { regex: '^_$', match: false },
+          custom: { regex: '^[a-zA-Z]$', match: false },
+        },
+        {
+          selector: 'parameter',
+          format: ['camelCase'],
+          filter: { regex: '^_', match: false },
+          custom: { regex: '^[a-zA-Z]$', match: false },
+        },
+      ],
     },
   },
 ];
