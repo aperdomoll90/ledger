@@ -144,3 +144,20 @@ export async function loadPreviousRun(
 
   return data as IEvalRunRowProps;
 }
+
+export async function loadEvalRun(
+  supabase: ISupabaseClientProps,
+  runId: number,
+): Promise<IEvalRunRowProps | null> {
+  const { data, error } = await supabase
+    .from('eval_runs')
+    .select('*')
+    .eq('id', runId)
+    .single();
+
+  if (error) {
+    return null;
+  }
+
+  return data as IEvalRunRowProps;
+}

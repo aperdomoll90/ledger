@@ -3,7 +3,7 @@ import type { IClientsProps } from '../lib/documents/classification.js';
 import { searchHybrid } from '../lib/search/ai-search.js';
 import { scoreTestCase, computeMetrics, formatReport, compareRuns, formatComparison } from '../lib/eval/eval.js';
 import type { IGoldenTestCaseProps, ITestResultProps } from '../lib/eval/eval.js';
-import { saveEvalRun, loadPreviousRun, CURRENT_SEARCH_CONFIG } from '../lib/eval/eval-store.js';
+import { saveEvalRun, loadPreviousRun, loadEvalRun, CURRENT_SEARCH_CONFIG } from '../lib/eval/eval-store.js';
 import { computeConfidenceIntervals, computeScoreCalibration, computeCoverageAnalysis, formatAdvancedReport } from '../lib/eval/eval-advanced.js';
 
 // =============================================================================
@@ -16,6 +16,10 @@ export interface IEvalOptionsProps {
 
 export interface ISweepOptionsProps {
   thresholds: string;
+}
+
+export interface IShowOptionsProps {
+  full: boolean;
 }
 
 // Search config imported from eval-store.ts (single source of truth)
@@ -198,4 +202,115 @@ export async function sweepThreshold(config: LedgerConfig, options: ISweepOption
   }
 
   console.log(`\nCurrent threshold: ${CURRENT_SEARCH_CONFIG.threshold}`);
+}
+
+// =============================================================================
+// Show — inspect a saved eval run, focused on missed queries
+// =============================================================================
+
+interface IDocLookupProps {
+  id:      number;
+  name:    string;
+  snippet: string;
+}
+
+async function fetchDocLookup(
+  supabase: IClientsProps['supabase'],
+  docIds:   number[],
+): Promise<Map<number, IDocLookupProps>> {
+  const lookup = new Map<number, IDocLookupProps>();
+  if (docIds.length === 0) return lookup;
+
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, name, content')
+    .in('id', docIds);
+
+  if (error || !data) return lookup;
+
+  for (const documentRow of data as Array<{ id: number; name: string; content: string | null }>) {
+    const content = documentRow.content ?? '';
+    const snippet = content.replace(/\s+/g, ' ').slice(0, 140);
+    lookup.set(documentRow.id, { id: documentRow.id, name: documentRow.name, snippet });
+  }
+  return lookup;
+}
+
+export async function showEvalRun(
+  config:  LedgerConfig,
+  runId:   number,
+  options: IShowOptionsProps,
+): Promise<void> {
+  const supabase = config.supabase;
+
+  const run = await loadEvalRun(supabase, runId);
+  if (!run) {
+    process.stderr.write(`Eval run ${runId} not found\n`);
+    process.exit(1);
+  }
+
+  console.log('\n' + '='.repeat(60));
+  console.log(`Eval Run ${run.id} — ${run.run_date}`);
+  console.log('='.repeat(60));
+  console.log(`Test cases:        ${run.test_case_count}`);
+  console.log(`Hit rate:          ${run.hit_rate.toFixed(1)}%`);
+  console.log(`First-result acc:  ${run.first_result_accuracy.toFixed(1)}%`);
+  console.log(`Recall:            ${run.recall.toFixed(1)}%`);
+  console.log(`MRR:               ${(run.mean_reciprocal_rank ?? 0).toFixed(3)}`);
+  console.log(`NDCG:              ${(run.normalized_discounted_cumulative_gain ?? 0).toFixed(3)}`);
+  console.log(`Zero-result rate:  ${run.zero_result_rate.toFixed(1)}%`);
+  console.log(`Avg response (ms): ${run.avg_response_time_ms.toFixed(0)}`);
+
+  const missedQueries = run.missed_queries ?? [];
+  console.log(`\nMissed queries: ${missedQueries.length}\n`);
+
+  if (missedQueries.length === 0) {
+    console.log('  (none)');
+    return;
+  }
+
+  // Resolve doc ids → names + snippets in one batch
+  const allDocIds = new Set<number>();
+  for (const missedQuery of missedQueries) {
+    for (const expectedId of missedQuery.expected) allDocIds.add(expectedId);
+    for (const returnedId of missedQuery.got.slice(0, 3)) allDocIds.add(returnedId);
+  }
+  const lookup = await fetchDocLookup(supabase, Array.from(allDocIds));
+
+  const formatDoc = (docId: number, score?: number): string => {
+    const document    = lookup.get(docId);
+    const documentName = document?.name ?? '<unknown>';
+    const scoreLabel  = score !== undefined ? ` (${score.toFixed(3)})` : '';
+    return `#${docId} ${documentName}${scoreLabel}`;
+  };
+
+  for (const [missedIndex, missedQuery] of missedQueries.entries()) {
+    console.log(`[${missedIndex + 1}] "${missedQuery.query}"`);
+    if (missedQuery.tags.length > 0) console.log(`    tags: ${missedQuery.tags.join(', ')}`);
+
+    console.log(`    expected:`);
+    for (const expectedId of missedQuery.expected) console.log(`      - ${formatDoc(expectedId)}`);
+
+    if (missedQuery.got.length === 0) {
+      console.log(`    got: (none — zero results)`);
+    } else {
+      console.log(`    got (top 3):`);
+      const topReturned = Math.min(3, missedQuery.got.length);
+      for (let position = 0; position < topReturned; position++) {
+        console.log(`      ${position + 1}. ${formatDoc(missedQuery.got[position], missedQuery.gotScores[position])}`);
+      }
+      const topDoc = lookup.get(missedQuery.got[0]);
+      if (topDoc?.snippet) console.log(`    top1 snippet: "${topDoc.snippet}…"`);
+    }
+    console.log('');
+  }
+
+  if (options.full && run.per_query_results) {
+    console.log('='.repeat(60));
+    console.log('Per-query results (full)');
+    console.log('='.repeat(60));
+    for (const queryResult of run.per_query_results) {
+      console.log(JSON.stringify(queryResult));
+    }
+  }
 }

@@ -24,7 +24,7 @@ import { check } from './commands/check.js';
 import { backup, enableBackupCron, disableBackupCron } from './commands/backup.js';
 import { restore } from './commands/restore.js';
 import { lint } from './commands/lint.js';
-import { evalSearch, sweepThreshold } from './commands/eval.js';
+import { evalSearch, sweepThreshold, showEvalRun } from './commands/eval.js';
 
 process.on('unhandledRejection', (rejection) => {
   console.error(rejection instanceof Error ? rejection.message : String(rejection));
@@ -170,6 +170,20 @@ program
   .action(async (options) => {
     const config = loadConfig();
     await sweepThreshold(config, { thresholds: options.thresholds });
+  });
+
+program
+  .command('eval:show <runId>')
+  .description('Inspect a saved eval run — summary metrics and missed queries with doc names')
+  .option('--full', 'also dump per-query results as JSON', false)
+  .action(async (runIdArg, options) => {
+    const config = loadConfig();
+    const runId  = parseInt(runIdArg, 10);
+    if (isNaN(runId)) {
+      process.stderr.write(`Invalid run id: ${runIdArg}\n`);
+      process.exit(1);
+    }
+    await showEvalRun(config, runId, { full: options.full ?? false });
   });
 
 // =============================================================================
