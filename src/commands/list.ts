@@ -1,22 +1,32 @@
 import type { LedgerConfig } from '../lib/config.js';
-import { opListNotes } from '../lib/notes.js';
+import { listDocuments } from '../lib/documents/fetching.js';
 
 export async function list(
   config: LedgerConfig,
-  options: { limit: number; type?: string; project?: string },
+  options: { limit: number; type?: string; project?: string; domain?: string },
 ): Promise<void> {
-  const result = await opListNotes(
-    { supabase: config.supabase, openai: config.openai },
-    options.limit,
-    options.type,
-    options.project,
-  );
+  const documents = await listDocuments(config.supabase, {
+    limit: options.limit,
+    document_type: options.type,
+    project: options.project,
+    domain: options.domain as any,
+  });
 
-  if (result.status === 'error') {
-    console.error(result.message);
-    process.exit(1);
+  if (documents.length === 0) {
+    console.error('No documents found.');
+    process.exit(0);
   }
 
-  // List output goes to stdout (machine-readable)
-  console.log(result.message);
+  const formatted = documents.map(document => {
+    return [
+      `[${document.id}] ${document.name}`,
+      `  Domain: ${document.domain} | Type: ${document.document_type}${document.project ? ` | Project: ${document.project}` : ''}`,
+      `  Protection: ${document.protection} | Auto-load: ${document.is_auto_load}`,
+      document.description ? `  Description: ${document.description}` : null,
+      `  Content: ${document.content.slice(0, 150)}${document.content.length > 150 ? '...' : ''}`,
+      `  Updated: ${document.updated_at}`,
+    ].filter(Boolean).join('\n');
+  });
+
+  console.log(formatted.join('\n\n'));
 }

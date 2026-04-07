@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { execFileSync } from 'child_process';
 import type { LedgerConfig } from '../lib/config.js';
-import { searchNotes } from '../lib/notes.js';
+import { searchHybrid } from '../lib/search/ai-search.js';
 import { fatal, ExitCode } from '../lib/errors.js';
 
 const VIEW_DIR = '/tmp/ledger-view';
@@ -13,30 +13,29 @@ interface ShowOptions {
 }
 
 export async function show(config: LedgerConfig, query: string, options: ShowOptions = {}): Promise<void> {
-  // Fetch more if filtering
-  const fetchLimit = (options.type || options.project) ? 10 : 1;
-  let results = await searchNotes(config.supabase, config.openai, query, 0.3, fetchLimit);
-
-  if (options.type) {
-    results = results.filter(n => (n.metadata as Record<string, unknown>).type === options.type);
-  }
-  if (options.project) {
-    results = results.filter(n => (n.metadata as Record<string, unknown>).project === options.project);
-  }
+  const results = await searchHybrid(
+    { supabase: config.supabase, openai: config.openai },
+    {
+      query,
+      limit: (options.type || options.project) ? 10 : 1,
+      document_type: options.type,
+      project: options.project,
+    },
+  );
 
   if (results.length === 0) {
-    fatal('No matching notes found.', ExitCode.NOTE_NOT_FOUND);
+    fatal('No matching documents found.', ExitCode.DOCUMENT_NOT_FOUND);
   }
 
-  const note = results[0];
-  const upsertKey = (note.metadata.upsert_key as string) || `note-${note.id}`;
-  const filename = `${upsertKey}.md`;
+  const document = results[0];
+  const filename = `${document.name}.md`;
 
   mkdirSync(VIEW_DIR, { recursive: true });
   const filePath = resolve(VIEW_DIR, filename);
-  writeFileSync(filePath, note.content + '\n', 'utf-8');
+  writeFileSync(filePath, document.content + '\n', 'utf-8');
 
-  console.log(`Match: "${upsertKey}" (similarity: ${note.similarity.toFixed(3)})`);
+  const score = document.score?.toFixed(3) ?? document.similarity?.toFixed(3) ?? 'n/a';
+  console.log(`Match: "${document.name}" (score: ${score})`);
   console.log(filePath);
 
   try {

@@ -8,7 +8,7 @@ const MIGRATIONS_DIR = resolve(__dirname, '../migrations');
 
 export function getMigrationFiles(): string[] {
   return readdirSync(MIGRATIONS_DIR)
-    .filter(f => f.endsWith('.sql'))
+    .filter(file => file.endsWith('.sql'))
     .sort();
 }
 
@@ -26,5 +26,5 @@ export async function getAppliedMigrations(supabase: SupabaseClient): Promise<Se
     return new Set();
   }
 
-  return new Set((data || []).map(r => r.version));
+  return new Set((data || []).map(row => row.version));
 }

@@ -1,8 +1,8 @@
 import { readFileSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
 import type { LedgerConfig } from '../lib/config.js';
-import { findNoteByFile, updateNoteContent, updateNoteHash } from '../lib/notes.js';
-import { contentHash } from '../lib/hash.js';
+import { listDocuments } from '../lib/documents/fetching.js';
+import { updateDocument } from '../lib/documents/operations.js';
 import { fatal, ExitCode } from '../lib/errors.js';
 
 export async function push(config: LedgerConfig, filePath: string): Promise<void> {
@@ -15,19 +15,23 @@ export async function push(config: LedgerConfig, filePath: string): Promise<void
   const filename = basename(absPath);
   const content = readFileSync(absPath, 'utf-8').trim();
 
-  const existing = await findNoteByFile(config.supabase, filename);
+  // Find document by file_path matching the filename
+  const documents = await listDocuments(config.supabase, { limit: 100 });
+  const existing = documents.find(
+    document => document.file_path && basename(document.file_path) === filename
+  );
 
   if (!existing) {
     fatal(
-      `No Ledger note matching "${filename}" found. Add it via MCP first.`,
-      ExitCode.NOTE_NOT_FOUND,
+      `No Ledger document matching "${filename}" found. Add it via MCP first.`,
+      ExitCode.DOCUMENT_NOT_FOUND,
     );
   }
 
-  await updateNoteContent(config.supabase, config.openai, existing.id, content);
+  await updateDocument(
+    { supabase: config.supabase, openai: config.openai },
+    { id: existing.id, content, agent: 'cli' },
+  );
 
-  const hash = contentHash(content);
-  await updateNoteHash(config.supabase, existing.id, hash);
-
-  console.log(`Pushed ${filename} → Ledger (note ${existing.id})`);
+  console.log(`Pushed ${filename} → Ledger (document ${existing.id}, "${existing.name}")`);
 }

@@ -1,24 +1,29 @@
 import type { LedgerConfig } from '../lib/config.js';
-import { opUpdateNote } from '../lib/notes.js';
+import { getDocumentById } from '../lib/documents/fetching.js';
+import { updateDocument } from '../lib/documents/operations.js';
 import { confirm } from '../lib/prompt.js';
 
 export async function update(
   config: LedgerConfig,
   id: number,
   content: string,
-  options: { metadata?: Record<string, unknown> },
 ): Promise<void> {
-  const clients = { supabase: config.supabase, openai: config.openai };
+  const document = await getDocumentById(config.supabase, id);
 
-  // First call: show confirmation
-  const preview = await opUpdateNote(clients, id, content, options.metadata, false);
-
-  if (preview.status === 'error') {
-    console.error(preview.message);
+  if (!document) {
+    console.error(`Document ${id} not found.`);
     process.exit(1);
   }
 
-  console.error(preview.message);
+  if (document.protection === 'immutable') {
+    console.error(`Document "${document.name}" (id: ${id}) is immutable and cannot be updated.`);
+    process.exit(1);
+  }
+
+  console.error(`Document: "${document.name}" (id: ${id})`);
+  console.error(`Current content preview: ${document.content.slice(0, 200)}${document.content.length > 200 ? '...' : ''}`);
+  console.error(`\nNew content preview: ${content.slice(0, 200)}${content.length > 200 ? '...' : ''}`);
+
   const proceed = await confirm('\nProceed with update?');
 
   if (!proceed) {
@@ -26,8 +31,6 @@ export async function update(
     return;
   }
 
-  // Second call: execute
-  const result = await opUpdateNote(clients, id, content, options.metadata, true);
-  console.error(result.message);
-  if (result.status === 'error') process.exit(1);
+  await updateDocument({ supabase: config.supabase, openai: config.openai }, { id, content, agent: 'cli' });
+  console.error(`Document ${id} updated successfully.`);
 }
