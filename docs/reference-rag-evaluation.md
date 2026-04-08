@@ -148,7 +148,7 @@ The hardest to measure. Requires feedback mechanisms.
 hit_rate = queries_with_at_least_one_hit / total_queries × 100
 ```
 
-**Example:** 56 test queries. 50 returned at least one expected doc. Hit rate = 89.3%.
+**Example:** 144 test queries. 140 returned at least one doc with `grade >= 2`. Hit rate = 97.2%.
 
 **When it matters:** Always — this is the most basic "is search working?" metric.
 
@@ -270,16 +270,33 @@ A query expects docs [5, 10, 15]. Search returns them at positions 1, 8, 9.
 
 MRR says everything is fine because it only checks the first hit. NDCG reveals that the other relevant documents are poorly ranked — an agent using multiple results would get bad context.
 
-**Binary vs graded relevance:**
+**Binary vs graded relevance (graded is the industry standard):**
 
-NDCG works with both:
+NDCG works with both, but it was *designed* for graded relevance. Use graded from day one if you can — the extra judgment effort is paid back immediately by metrics that actually reflect retrieval quality.
 
-| Relevance model | How it works                                                  | When to use                       |
-|-----------------|---------------------------------------------------------------|-----------------------------------|
-| **Binary**      | Relevance = 1 if doc is in expected list, 0 otherwise         | Most RAG systems, golden datasets with expected_doc_ids |
-| **Graded**      | Relevance = 0 (irrelevant), 1 (related), 2 (exact match)     | When you can distinguish "close" from "perfect" answers |
+| Relevance model | Gain function            | Scale              | When to use                                                   |
+|-----------------|---------------------------|--------------------|---------------------------------------------------------------|
+| **Binary**      | `gain = relevance` (0/1)  | 0, 1               | Bootstrapping only. Produces compressed, under-informative NDCG |
+| **Graded (TREC 4-level)** | `gain = 2^grade - 1` | 0, 1, 3, 7  | **Default.** Matches the original Järvelin & Kekäläinen (2002) formulation and TREC conventions |
 
-Binary NDCG is valuable even without graded relevance — it catches multi-document ranking issues that MRR misses entirely. Start with binary, upgrade to graded when your golden dataset supports it.
+**The TREC 4-level scale:**
+
+| Grade | Name            | Meaning                                                     | Example                                              |
+|-------|-----------------|-------------------------------------------------------------|------------------------------------------------------|
+| **0** | Not relevant    | No useful information for this query. Wrong topic.          | "How does auth work?" → returns a pricing doc.       |
+| **1** | Related         | Touches the topic but doesn't answer.                        | Returns a changelog that mentions auth once.         |
+| **2** | Relevant        | Answers the query, but not the ideal/canonical source.       | Returns a summary that has the answer in one line.   |
+| **3** | Highly relevant | The canonical, complete answer.                              | Returns the dedicated auth architecture doc.         |
+
+**Why not 3 levels or 5+?** 3 levels collapses "defensible alternative" and "canonical" into one grade, losing the distinction that graded relevance exists to capture. 5+ levels hits inter-annotator agreement limits — judges can reliably distinguish 4 buckets but start disagreeing at 5+.
+
+**Decision heuristics for boundary calls** (reduces judge fatigue and inconsistency):
+- **1 vs 2:** "Would a user be happy if this was the top result?" Yes = 2, No = 1.
+- **2 vs 3:** "Is there a better doc for this query that I know exists?" Yes = 2, No = 3.
+
+**Rate-metric threshold:** With graded relevance, all *rate* metrics (hit rate, first-result accuracy, recall, MRR) use a single consistent rule: **a result counts as good if its grade is ≥ 2** (Relevant or Highly Relevant). Only NDCG uses the full grade gradation via `2^grade - 1`. Store `hit_threshold` and `ndcg_gain_formula` in each eval run's config so runs are self-documenting and comparable across time.
+
+**Binary as a starting point:** Binary NDCG is still useful if your dataset is tiny and you haven't invested in graded judgments yet — it catches multi-document ranking issues that MRR misses entirely. But don't treat it as the end state. Binary judgments punish "defensible alternative" results as false negatives, which suppresses first-result accuracy below its real value. Convert to graded the moment you can, using a convert+augment migration (auto-convert existing binary to grade 3, then human-judge the top-k candidates for each query to add grades 0–2).
 
 **Interpretation:**
 
@@ -440,27 +457,40 @@ The foundation of repeatable evaluation. Without it, you're testing ad-hoc queri
 
 ### What Makes a Good Test Case
 
+A graded golden dataset is two tables joined: a `queries` table (query text, tags) and a `judgments` table (query_id, document_id, grade 0–3). One query can have many judgments across many docs.
+
 ```
+-- query
 {
-  "query":            "How does hybrid search combine results?",
-  "expected_doc_ids": [139],
-  "tags":             ["technical", "search"],
-  "expected_answer":  "Hybrid search uses RRF fusion..."  // optional
+  "id":              42,
+  "query":           "How does hybrid search combine results?",
+  "tags":            ["technical", "search"],
+  "expected_answer": "Hybrid search uses RRF fusion..."  // optional
 }
+
+-- judgments for query 42
+[
+  { "query_id": 42, "document_id": 139, "grade": 3 },  // canonical answer
+  { "query_id": 42, "document_id": 22,  "grade": 2 },  // summary doc, also good
+  { "query_id": 42, "document_id": 149, "grade": 1 },  // tangentially related
+  { "query_id": 42, "document_id": 52,  "grade": 0 }   // wrong topic
+]
 ```
 
 | Field              | Required? | Purpose                                                       |
 |--------------------|-----------|---------------------------------------------------------------|
 | `query`            | Yes       | The search query — should be realistic, not synthetic-sounding |
-| `expected_doc_ids` | Yes       | Which document(s) should appear in results                    |
 | `tags`             | Yes       | Categories for per-type analysis                              |
+| `judgments[]`      | Yes       | Per-doc grades using TREC 4-level scale (see scoring section) |
 | `expected_answer`  | No        | Only needed for generation quality eval                       |
 
 **A good test case:**
 - Uses natural language a real user/agent would type
-- Has unambiguous expected documents (you can objectively verify)
 - Is tagged for category analysis
+- Has judgments that cover at least the top-k results your current pipeline returns (capture the defensible alternatives, not just the canonical answer)
 - Tests one thing (simple) or a specific combination (multi-doc, cross-domain)
+
+**Judgment coverage rule of thumb:** grade the top 10 results from your current search pipeline for every query. That captures defensible alternatives without asking judges to consider docs the system would never surface. Accept that this biases judgments toward your current pipeline — that's a measurement trade-off, not a bug. Recall gaps (docs the pipeline never returns) are a separate problem solved by retrieval improvements, not by judgment.
 
 ### Query Categories
 
@@ -515,7 +545,7 @@ Weekly review:
   - Repeated searches (same user, rephrased) → paraphrase category
        │
        ▼
-Human labels expected docs → add to eval_golden_dataset
+Human grades top-k results per query (TREC 0–3) → add to eval_golden_dataset + eval_golden_judgments
        │
        ▼
 Next eval run uses expanded dataset
@@ -528,7 +558,8 @@ Next eval run uses expanded dataset
 | Anti-pattern                        | Why it's bad                                                                          | Fix                                                                                      |
 |-------------------------------------|---------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|
 | All queries are simple lookups      | Doesn't test conceptual search, the hardest part                                      | Add conceptual, multi-doc, cross-domain categories                                       |
-| Expected docs are wrong             | Eval score is meaningless if labels are incorrect                                      | Review labels quarterly — docs get updated, IDs change                                   |
+| Binary judgments (only canonical counts) | Defensible alternatives get counted as failures. First-result accuracy is under-measured. | Use TREC 4-level graded judgments (0–3) with `gain = 2^grade - 1`                  |
+| Expected docs are wrong             | Eval score is meaningless if labels are incorrect                                      | Review judgments quarterly — docs get updated, IDs change                                |
 | No out-of-scope cases               | Can't detect false positives — system returns nonsense confidently                    | Add 5-10% out-of-scope queries                                                           |
 | Synthetic queries without review    | LLM-generated queries are often too clean or too weird                                | Human review every synthetic case                                                        |
 | Never updated                       | Corpus changes but test cases don't — testing against stale expectations              | Review after every major content change                                                  |
@@ -834,15 +865,15 @@ No CLI command, no cron, no CI integration. It's a developer tool invoked by han
 
 **Step 1 — Load golden test cases from Supabase.**
 
-The script queries `eval_golden_dataset` (56 rows). Each row is a query + the doc IDs that should come back:
+The script queries `eval_golden_dataset` (144 rows) and joins each row with its per-doc graded judgments from `eval_golden_judgments`:
 
 ```
-"how does auth work?"  →  expected: [42, 99]    tags: [conceptual]
-"pgvector HNSW"        →  expected: [137]        tags: [exact-term]
-"pizza recipes"        →  expected: []            tags: [out-of-scope]
+"how does auth work?"  →  judgments: [{42, 3}, {99, 3}, {17, 2}, {8, 0}]   tags: [conceptual]
+"pgvector HNSW"        →  judgments: [{137, 3}, {22, 2}, {144, 1}]          tags: [exact-term]
+"pizza recipes"        →  judgments: []                                      tags: [out-of-scope]
 ```
 
-These were manually inserted — no seed file in the repo. The table has a GIN index on `tags` for filtering.
+Each judgment is a (document_id, grade) pair using the TREC 4-level scale (0 not relevant → 3 highly relevant). Grades are written by `ledger eval:judge` (resumable rejudging CLI) via the `judgment_create` RPC. The `eval_golden_dataset` table has a GIN index on `tags` for filtering; `eval_golden_judgments` has B-tree indexes on `golden_id`, `document_id`, and `grade`.
 
 **Step 2 — For each test case, run an actual search.**
 
@@ -873,18 +904,19 @@ Each search also fire-and-forget logs to `search_evaluations` — same as produc
 
 **Step 3 — Score each result.**
 
-`scoreTestCase()` (in `eval.ts`) takes the golden test case + search results and computes:
+`scoreTestCase()` (in `eval.ts`) takes the graded golden test case + search results and computes using `hit_threshold = 2`:
 
-| Field             | What it captures                                           |
-|-------------------|------------------------------------------------------------|
-| `hit`             | Did any expected doc appear in results?                    |
-| `firstResultHit`  | Was the #1 result one of the expected docs?                |
-| `position`        | Where did the first expected doc appear? (null if missed)  |
-| `reciprocalRank`  | `1 / (position + 1)` — feeds into MRR                     |
-| `expectedFound`   | How many of the expected docs were found                   |
-| `expectedTotal`   | How many expected docs the test case has                   |
+| Field             | What it captures                                                                       |
+|-------------------|----------------------------------------------------------------------------------------|
+| `hit`             | Did any returned doc have `grade >= 2`?                                                |
+| `firstResultHit`  | Did the #1 result have `grade >= 2`?                                                   |
+| `position`        | Where did the first doc with `grade >= 2` appear? (null if missed)                     |
+| `reciprocalRank`  | `1 / (position + 1)` — feeds into MRR                                                  |
+| `expectedFound`   | How many returned docs had `grade >= 2`                                                |
+| `expectedTotal`   | How many judgments have `grade >= 2`                                                   |
+| `ndcg`            | NDCG with `gain = 2^grade - 1` using the full grade gradation (0, 1, 3, 7)             |
 
-For out-of-scope cases (empty `expected_doc_ids`), a "hit" means the search correctly returned nothing.
+Returned docs with no judgment default to grade 0 (treated as not relevant). Out-of-scope test cases (zero judgments at grade ≥ 2) pass only when search returns no results.
 
 **Step 4 — Aggregate.**
 
@@ -1124,7 +1156,7 @@ Scores overlap — the system can't distinguish relevant from irrelevant by scor
 | Metric                   | What it tells you                                           |
 |--------------------------|-------------------------------------------------------------|
 | **Queries per tag**      | Which query categories have enough test cases (5+ = good)   |
-| **Unique docs tested**   | How many distinct documents appear in expected_doc_ids       |
+| **Unique docs tested**   | How many distinct documents appear in `eval_golden_judgments` at grade ≥ 2 |
 | **Undertested tags**     | Tags with fewer than 3 test cases — results for these are unreliable |
 | **Out-of-scope count**   | How many negative test cases you have (5-10% is good)        |
 
@@ -1197,11 +1229,11 @@ Production failures should become test cases:
 
 2. Human review:
    - Is there a document that SHOULD match this query?
-   - If yes → create golden dataset entry (query + expected_doc_id)
-   - If no → is the query out-of-scope? Add as out-of-scope test case
+   - If yes → create golden dataset entry, then grade the top-10 search results via `ledger eval:judge`
+   - If no → is the query out-of-scope? Add with zero grade-≥2 judgments
    - If no → is content missing? Flag as content gap (different problem)
 
-3. Insert into eval_golden_dataset
+3. Insert query into `eval_golden_dataset`, insert graded judgments into `eval_golden_judgments`
 
 4. Next eval run uses the expanded dataset
 ```
@@ -1212,14 +1244,15 @@ Production failures should become test cases:
 
 ### Database Schema
 
-Four tables support the eval system, organized into two independent subsystems:
+Five tables support the eval system, organized into two independent subsystems:
 
-| Table                            | Purpose                               | Retention                        |
-|----------------------------------|---------------------------------------|----------------------------------|
-| `search_evaluations`             | Raw search logs (every search)        | 30 days (aggregated then purged) |
-| `search_evaluation_aggregates`   | Daily summaries                       | Indefinite                       |
-| `eval_golden_dataset`            | Test cases (the answer key)           | Indefinite (growing)             |
-| `eval_runs`                      | Stored eval results (the grade)       | Indefinite                       |
+| Table                            | Purpose                                                                 | Retention                        |
+|----------------------------------|-------------------------------------------------------------------------|----------------------------------|
+| `search_evaluations`             | Raw search logs (every search)                                          | 30 days (aggregated then purged) |
+| `search_evaluation_aggregates`   | Daily summaries                                                         | Indefinite                       |
+| `eval_golden_dataset`            | Curated test queries with tags                                          | Indefinite (growing)             |
+| `eval_golden_judgments`          | Graded per-(query, doc) judgments — TREC 0–3 scale                      | Indefinite (growing)             |
+| `eval_runs`                      | Stored eval results with config snapshot (incl. `hit_threshold`)        | Indefinite                       |
 
 See `reference-rag-database-schemas.md` for full CREATE TABLE SQL.
 
@@ -1241,16 +1274,21 @@ Every search ──► search_evaluations (raw, 50+ rows/day)
 
 **Subsystem 2 — Controlled evaluation (manual, on-demand).** Tests whether search results are *correct* by comparing against known-good answers.
 
-- `eval_golden_dataset` — the answer key. Hand-curated test cases: "if someone asks X, they should find documents Y." Does not grow automatically — new cases are added manually when new failure modes are discovered.
-- `eval_runs` — the graded exam. One row per eval execution, containing all metrics (hit rate, MRR, recall), the config snapshot (threshold, model, RRF k), and full per-query detail. The historical record of search quality over time.
+- `eval_golden_dataset` — hand-curated test queries with tags. "If someone asks X, here's the question." Grows manually as new failure modes are discovered.
+- `eval_golden_judgments` — the answer key as graded relevance: per-(query, doc) grades on the TREC 4-level scale (0/1/2/3). Written by `ledger eval:judge` via the `judgment_create` RPC. Every returned doc gets a grade; canonical answers are grade 3, defensible alternatives are grade 2, tangential is grade 1, wrong is grade 0.
+- `eval_runs` — the graded exam. One row per eval execution, containing all metrics (hit rate, MRR, recall, NDCG with `2^grade-1` gain), the config snapshot (threshold, model, RRF k, `hit_threshold`, `ndcg_gain_formula`), and full per-query detail. The historical record of search quality over time.
 
 ```
-eval_golden_dataset (test cases, static)
+eval_golden_dataset (queries, tags)
         │
-  eval script runs each through search
+        ├─< eval_golden_judgments (per-doc grades)
+        │
+  eval script loads query + joined judgments
+        │
+  runs each query through search
         │
         ▼
-  score + aggregate
+  score + aggregate (hit_threshold=2, NDCG gain=2^g-1)
         │
         ▼
   eval_runs (1 row per run, historical)
@@ -1297,7 +1335,7 @@ search_evaluation_aggregates (one row per day)
 | Raw cleanup        | Daily (after aggregation) | `cleanup_search_evaluations('30 days')` — delete old raw rows          |
 | Eval suite         | Weekly or on code change  | Run golden dataset, save to `eval_runs`, compare to previous           |
 | Golden set growth  | Monthly                   | Review production failures, add new test cases                         |
-| Label validation   | Quarterly                 | Review expected_doc_ids — docs change, IDs shift                       |
+| Judgment validation | Quarterly                 | Review graded judgments — docs change, IDs shift, vocabulary drifts    |
 
 ### CI/CD Integration
 

@@ -1795,3 +1795,51 @@ Designed, planned, and implemented two complementary improvements to the ingesti
 1. Phase 4.5.5: Semantic cache — HNSW fuzzy query matching on query_cache
 2. Phase 4.6.2: Graded relevance — upgrade golden dataset from binary to 0/1/2 scoring
 3. Investigate remaining 5 missed queries — may need query reformulation or golden dataset label fixes
+
+## Session 35 — 2026-04-07
+
+### eval:show CLI Command
+- Added `ledger eval:show <runId>` command to inspect saved eval runs, resolves doc ids → names, shows top-3 returned for each missed query with snippets
+- New `loadEvalRun(id)` in `eval-store.ts` (sibling to `loadPreviousRun`)
+- Committed on `feat/v2-phase-1-database`, pushed
+
+### Run 12 Missed-Query Diagnosis
+Diagnosed all 5 misses from run 12 via `search_by_keyword` + `search_by_meaning` isolation tests:
+- **Query #5** ("all system rules and sync rules"): enumeration request, not a retrieval shape. **Deleted from dataset** (row id 124).
+- **Queries #1, #2**: false negatives — retrieval surfaced defensible alternatives (#144, #22) that binary dataset counts as wrong. Graded relevance will fix.
+- **Queries #3, #4**: genuine conceptual→jargon vocabulary gap (bi-encoder can't bridge "strengths/weaknesses" → "ADHD/habits", "prevent data loss" → "transactional/audit"). Cross-encoder reranker is the industry-standard fix. Deferred — we'll re-enable the existing disabled reranker later if graded metrics still show the gap.
+- **Query #2 special note**: AND-semantics granularity trap — only one chunk in the corpus contains all three terms (`websearch_to_tsquery`, `tsvector`, `GIN`) together, and it's the summary line in `ledger-product-vision`. Deep docs lose because the terms are spread across chunks. Not a bug, just how AND-semantics interacts with chunk granularity.
+
+### Run 13 — New Baseline
+After deleting query #5, re-ran eval. 144 test cases.
+- Hit rate: 96.2 → **97.0%** (+0.8)
+- First-result: 65.4 → **65.2%** (-0.2)
+- Recall: 79.3 → **81.4%** (+2.1)
+- MRR: 0.756 → **0.760**
+- NDCG: 0.764 → **0.769**
+- Saved as `eval_runs.id = 13`
+
+### Phase 4.6.2 Brainstorming Complete
+Five-question design session for graded relevance:
+1. **Scale**: TREC 4-level (0/1/2/3) — matches NDCG `2^g-1` gain formula, industry standard
+2. **Schema**: normalized `eval_golden_judgments` table (not JSONB) — matches CLAUDE.md "no JSONB grab bags" rule, supports audit trail, FK to documents with cascade
+3. **Migration**: convert + augment — auto-convert existing binary to grade 3, then human-rejudge top-10 for each query via tool
+4. **Metrics**: `hit_threshold = 2` for rate metrics (hit rate, first-result, recall, MRR), NDCG uses full `2^grade - 1` gradation
+5. **Tool UX**: resumable full-dataset walkthrough (`ledger eval:judge`), durable per-keystroke writes, inline rubric, back-step support
+
+Design spec written: [docs/superpowers/specs/2026-04-07-phase-4.6.2-graded-relevance-design.md](docs/superpowers/specs/2026-04-07-phase-4.6.2-graded-relevance-design.md)
+
+### Key Decisions
+- Reranker deferred (not removed) — existing disabled code stays, will revisit if 4.6.2 metrics still show conceptual→jargon gap
+- HyDE explicitly rejected — adds latency + hallucination risk, and we already have a built reranker as the textbook fix
+- Phase 4.6.2 ordered BEFORE 4.5.5 semantic cache — you can't tune what you can't measure, and cache thresholds depend on honest similarity separation (current calibration separation is 0.005, which is noise)
+- Expected metric shifts post-graded: first-result 65 → 75-85%, NDCG spreads meaningfully. These are measurement changes, NOT retrieval improvements. Will be documented clearly.
+
+### Branch Management
+- Work on `eval:show` + missed-query diagnosis + query #5 deletion was committed/pushed on `feat/v2-phase-1-database`
+- New branch `feat/v2-phase-4.6.2-graded-relevance` cut from `origin/main` for Phase 4.6.2 work
+
+### Next Session
+1. User reviews spec at [docs/superpowers/specs/2026-04-07-phase-4.6.2-graded-relevance-design.md](docs/superpowers/specs/2026-04-07-phase-4.6.2-graded-relevance-design.md)
+2. Invoke `writing-plans` skill to produce implementation plan
+3. Execute per plan: migration → types/scoring → conversion script → dry-run parity check → rejudging tool → rejudge → run 14 → drop `expected_doc_ids`

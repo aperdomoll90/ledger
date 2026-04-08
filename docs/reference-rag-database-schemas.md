@@ -23,7 +23,7 @@
     - [ingestion_queue](#ingestion_queue)
   - Evaluation
     - [search_evaluations](#search_evaluations)
-    - [eval_golden_dataset](#eval_golden_dataset)
+    - [eval_golden_dataset + eval_golden_judgments](#eval_golden_dataset--eval_golden_judgments-graded-relevance)
     - [search_evaluation_aggregates](#search_evaluation_aggregates)
     - [eval_runs](#eval_runs)
 - [Indexes](#indexes)
@@ -391,28 +391,63 @@ CREATE TABLE search_evaluations (
 );
 ```
 
-#### eval_golden_dataset
+#### eval_golden_dataset + eval_golden_judgments (graded relevance)
 
-Known-correct test cases. "If someone searches X, they should find document Y." The foundation of measurable evaluation.
+The foundation of measurable evaluation. Split into two tables so per-(query, doc) grades can be added, updated, and audited independently. This is the graded-relevance pattern the industry standardized on — TREC 4-level scale with `gain = 2^grade - 1` for NDCG.
 
-| Column             | What it's for |
-|--------------------|---------------|
-| `query`            | The test query: "What is the database schema?" |
-| `expected_doc_ids` | Which documents should appear in results |
-| `expected_answer`  | Optional: reference answer for generation quality testing |
-| `tags`             | Categorize difficulty: simple, conceptual, exact-term, multi-doc, out-of-scope |
+**Why two tables, not one JSONB column:**
+- Editing one grade is `UPDATE ... WHERE golden_id=X AND document_id=Y` — no array rewrites
+- Real foreign keys to `documents` with CASCADE delete keeps judgments consistent when docs are purged
+- Audit columns (`judged_at`, `judged_by`, `notes`) give you a judgment history without extra infrastructure
+- Easy to query across all judgments: "show me everything graded 3 for doc X", "all judgments updated this quarter", etc.
+- Forward-compatible with multi-judge workflows (add `UNIQUE (golden_id, document_id, judged_by)` later)
 
 ```sql
+-- Queries
 CREATE TABLE eval_golden_dataset (
   id              bigserial    PRIMARY KEY,
   query           text         NOT NULL,
-  expected_doc_ids int[]       NOT NULL,
-  expected_answer text,
-  tags            text[]       DEFAULT '{}',
+  expected_answer text,                                   -- optional, for generation eval
+  tags            text[]       DEFAULT '{}',              -- simple, conceptual, exact-term, multi-doc, out-of-scope, ...
   created_at      timestamptz  NOT NULL DEFAULT now(),
   updated_at      timestamptz  NOT NULL DEFAULT now()
 );
+
+-- Graded relevance judgments (TREC 4-level)
+CREATE TABLE eval_golden_judgments (
+  id            bigserial    PRIMARY KEY,
+  golden_id     bigint       NOT NULL REFERENCES eval_golden_dataset(id) ON DELETE CASCADE,
+  document_id   bigint       NOT NULL REFERENCES documents(id)           ON DELETE CASCADE,
+  grade         smallint     NOT NULL CHECK (grade BETWEEN 0 AND 3),
+  judged_at     timestamptz  NOT NULL DEFAULT now(),
+  judged_by     text         NOT NULL DEFAULT 'system',
+  notes         text,
+  UNIQUE (golden_id, document_id)
+);
+
+CREATE INDEX idx_golden_judgments_golden_id   ON eval_golden_judgments(golden_id);
+CREATE INDEX idx_golden_judgments_document_id ON eval_golden_judgments(document_id);
+CREATE INDEX idx_golden_judgments_grade       ON eval_golden_judgments(grade);
 ```
+
+**TREC 4-level scale:**
+
+| Grade | Meaning                                                      |
+|-------|--------------------------------------------------------------|
+| **0** | Not relevant — no useful info                                |
+| **1** | Related — touches topic, doesn't answer                      |
+| **2** | Relevant — answers, not the ideal/canonical source           |
+| **3** | Highly relevant — the canonical, complete answer             |
+
+**Metric rules (consume judgments):**
+- Rate metrics (hit rate, first-result, recall, MRR) use `hit_threshold = 2` — a result counts if its grade is 2 or higher
+- NDCG uses the full grade via `gain = 2^grade - 1` (produces 0, 1, 3, 7)
+- Out-of-scope queries have zero judgments at grade ≥ 2; they pass only when search returns nothing
+- Store `hit_threshold` and `ndcg_gain_formula` in each eval run's config so runs are self-documenting and comparable
+
+**Legacy binary pattern (do not use for new systems):**
+
+Historically, golden datasets used a single `expected_doc_ids int[]` column per query. This is the simpler pattern but it has a hidden failure mode: defensible alternative docs (ones that correctly answer the query but aren't the single canonical doc) get counted as failures, so first-result accuracy is under-measured. Convert binary datasets to graded via the convert+augment migration described in `reference-rag-evaluation.md` → "Binary vs graded relevance."
 
 #### search_evaluation_aggregates
 
@@ -583,6 +618,19 @@ CREATE INDEX index_search_evaluations_feedback ON search_evaluations (feedback)
 ```sql
 -- Filter test cases by tag
 CREATE INDEX index_eval_golden_tags ON eval_golden_dataset USING gin(tags);
+```
+
+### eval_golden_judgments
+
+```sql
+-- Lookup all judgments for a query (eval loader join)
+CREATE INDEX idx_golden_judgments_golden_id   ON eval_golden_judgments (golden_id);
+
+-- Lookup all judgments for a document (audit — "what's graded against doc X?")
+CREATE INDEX idx_golden_judgments_document_id ON eval_golden_judgments (document_id);
+
+-- Bucket scans — "all grade-3 judgments", "all grade-0 judgments"
+CREATE INDEX idx_golden_judgments_grade       ON eval_golden_judgments (grade);
 ```
 
 ### search_evaluation_aggregates
@@ -956,7 +1004,7 @@ CREATE POLICY "Anon no access" ON <table_name>
   FOR ALL TO anon USING (false);
 ```
 
-Apply this pattern to every table: documents, document_chunks, audit_log, document_versions, query_cache, embedding_models, search_evaluations, eval_golden_dataset, search_evaluation_aggregates, eval_runs, ingestion_queue, and any project-specific tables.
+Apply this pattern to every table: documents, document_chunks, audit_log, document_versions, query_cache, embedding_models, search_evaluations, eval_golden_dataset, eval_golden_judgments, search_evaluation_aggregates, eval_runs, ingestion_queue, and any project-specific tables.
 
 For multi-tenant systems, add per-user policies:
 

@@ -49,7 +49,8 @@ The database is the backbone of Ledger. Documents go in, get chunked and embedde
 | Ingestion  | `ingestion_queue`              | Async file processing pipeline (Phase 4.6 — table only)    | No            |
 | Evaluation | `search_evaluations`           | Raw search telemetry — every search auto-logged             | Yes           |
 | Evaluation | `search_evaluation_aggregates` | Daily summaries of search telemetry                         | No (no cron)  |
-| Evaluation | `eval_golden_dataset`          | 56 known-correct test cases for search evaluation           | Yes           |
+| Evaluation | `eval_golden_dataset`          | 144 curated test cases (query + tags) for search evaluation | Yes           |
+| Evaluation | `eval_golden_judgments`        | Graded relevance judgments per (query, doc) — TREC 0–3 scale| Yes           |
 | Evaluation | `eval_runs`                    | Stored eval results — metrics, config, per-query detail     | Yes           |
 
 ### How data flows between tables
@@ -64,6 +65,8 @@ query_cache >── embedding_models  (N:1, which model generated the cached emb
 ingestion_queue >── documents     (N:1, links to created doc on completion)
 
 search_evaluations ──> search_evaluation_aggregates  (daily cron crunches raw → summary)
+eval_golden_dataset ──< eval_golden_judgments        (1:N, CASCADE — one judgment per doc per query)
+eval_golden_judgments >── documents                  (N:1, CASCADE — judgments follow the doc)
 eval_golden_dataset ──> eval_runs                    (test cases scored → results stored)
 ```
 
@@ -82,7 +85,7 @@ How search uses both:
 
 **Production monitoring (passive).** `search_evaluations` records every search silently — query, results, latency. `search_evaluation_aggregates` crunches those into daily summaries. These have no concept of "correct" — just raw data.
 
-**Controlled evaluation (manual).** `eval_golden_dataset` holds the answer key (56 test cases). `eval_runs` stores the graded results. These compare search output against known-correct answers.
+**Controlled evaluation (manual).** `eval_golden_dataset` holds 144 curated queries with tags. `eval_golden_judgments` holds the answer key as graded relevance judgments (TREC 4-level: 0 not relevant, 1 related, 2 relevant, 3 highly relevant) — one row per (query, doc) pair, with `judged_at`, `judged_by`, and `notes` for audit. `eval_runs` stores graded metric results. These compare search output against known-correct answers using `hit_threshold=2` for rate metrics (hit rate, first-result, recall, MRR) and the full `2^grade - 1` gain function for NDCG.
 
 They're independent but designed to feed each other: spot failures in production logs → add to golden set → next eval run catches it.
 

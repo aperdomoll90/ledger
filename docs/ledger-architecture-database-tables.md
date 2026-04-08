@@ -25,6 +25,7 @@
   - [search_evaluations](#search_evaluations)
   - [search_evaluation_aggregates](#search_evaluation_aggregates)
   - [eval_golden_dataset](#eval_golden_dataset)
+  - [eval_golden_judgments](#eval_golden_judgments)
   - [eval_runs](#eval_runs)
 
 ---
@@ -439,15 +440,14 @@ CREATE TABLE search_evaluation_aggregates (
 
 ### eval_golden_dataset
 
-Known-correct query/expected-doc pairs for automated evaluation. 56 test cases across 6 categories.
+Curated test queries for automated evaluation. 144 test cases across 19 tags. Pairs with `eval_golden_judgments` for graded relevance — the dataset holds queries, the judgments table holds per-doc grades.
 
 | Column               | Type         | Nullable | Default        | Purpose                                              |
 |----------------------|--------------|----------|----------------|------------------------------------------------------|
 | `id`                 | bigserial    | NO       | auto           | Primary key                                          |
 | `query`              | text         | NO       |                | The test search query                                |
-| `expected_doc_ids`   | integer[]    | NO       |                | Document IDs that should appear in results           |
 | `expected_answer`    | text         | YES      |                | Expected answer text (for generation eval, unused)   |
-| `tags`               | text[]       | YES      | '{}'           | Categories: simple, conceptual, exact-term, multi-doc, cross-domain, out-of-scope |
+| `tags`               | text[]       | YES      | '{}'           | Categories: simple, conceptual, exact-term, multi-doc, cross-domain, out-of-scope, persona, ledger, atelier, etc. |
 | `created_at`         | timestamptz  | NO       | now()          | Creation timestamp                                   |
 | `updated_at`         | timestamptz  | NO       | now()          | Last update                                          |
 
@@ -455,13 +455,67 @@ Known-correct query/expected-doc pairs for automated evaluation. 56 test cases a
 CREATE TABLE eval_golden_dataset (
   id                 bigserial    PRIMARY KEY,
   query              text         NOT NULL,
-  expected_doc_ids   integer[]    NOT NULL,
   expected_answer    text,
   tags               text[]       DEFAULT '{}',
   created_at         timestamptz  NOT NULL DEFAULT now(),
   updated_at         timestamptz  NOT NULL DEFAULT now()
 );
 ```
+
+> **Migration note (Phase 4.6.2):** The legacy `expected_doc_ids integer[]` column was removed after being converted to graded judgments. Every doc previously in `expected_doc_ids` became a grade-3 row in `eval_golden_judgments`. The rejudging pass then added grades 0–2 for the remaining top-10 search candidates per query.
+
+---
+
+### eval_golden_judgments
+
+Graded relevance judgments — one row per (query, document) pair, using the TREC 4-level scale (0 not relevant, 1 related, 2 relevant, 3 highly relevant). Replaces the old binary `expected_doc_ids` pattern. Enables NDCG with real gain gradation (`2^grade - 1`) and a consistent `hit_threshold=2` rule across rate metrics.
+
+| Column         | Type         | Nullable | Default        | Purpose                                                              |
+|----------------|--------------|----------|----------------|----------------------------------------------------------------------|
+| `id`           | bigserial    | NO       | auto           | Primary key                                                          |
+| `golden_id`    | bigint       | NO       |                | FK → `eval_golden_dataset.id` ON DELETE CASCADE                      |
+| `document_id`  | bigint       | NO       |                | FK → `documents.id` ON DELETE CASCADE (grades follow the doc)        |
+| `grade`        | smallint     | NO       |                | TREC grade. CHECK (grade BETWEEN 0 AND 3)                            |
+| `judged_at`    | timestamptz  | NO       | now()          | Audit — when this judgment was recorded                              |
+| `judged_by`    | text         | NO       | 'adrian'       | Audit — who judged. Forward-compat for multi-judge support           |
+| `notes`        | text         | YES      |                | Free-form reasoning for tricky boundary calls                        |
+
+```sql
+CREATE TABLE eval_golden_judgments (
+  id            bigserial    PRIMARY KEY,
+  golden_id     bigint       NOT NULL REFERENCES eval_golden_dataset(id) ON DELETE CASCADE,
+  document_id   bigint       NOT NULL REFERENCES documents(id)           ON DELETE CASCADE,
+  grade         smallint     NOT NULL CHECK (grade BETWEEN 0 AND 3),
+  judged_at     timestamptz  NOT NULL DEFAULT now(),
+  judged_by     text         NOT NULL DEFAULT 'adrian',
+  notes         text,
+  UNIQUE (golden_id, document_id)
+);
+```
+
+**TREC grading rubric:**
+
+| Grade | Name            | Meaning                                                      |
+|-------|-----------------|--------------------------------------------------------------|
+| **0** | Not relevant    | No useful info for this query. Wrong topic.                  |
+| **1** | Related         | Touches the topic but doesn't answer.                        |
+| **2** | Relevant        | Answers the query, but not the ideal/canonical source.       |
+| **3** | Highly relevant | The canonical, complete answer.                              |
+
+**Decision heuristics for boundary calls:**
+- **1 vs 2:** "Would a user be happy if this was the top result?" Yes = 2, No = 1.
+- **2 vs 3:** "Is there a better doc for this query that I know exists?" Yes = 2, No = 3.
+
+**Metric definitions that consume grades:**
+
+| Metric                    | Rule                                                                  |
+|---------------------------|------------------------------------------------------------------------|
+| Hit rate                  | Any returned doc has `grade >= 2`                                      |
+| First-result accuracy     | Top returned doc has `grade >= 2`                                      |
+| Recall                    | `(returned with grade >= 2) / (judgments with grade >= 2)`             |
+| MRR                       | `1 / position of first grade >= 2`                                     |
+| NDCG                      | Uses `gain = 2^grade - 1` (0, 1, 3, 7) — the full grade gradation      |
+| Out-of-scope              | Pass if zero results returned AND no judgments at grade >= 2           |
 
 ---
 
