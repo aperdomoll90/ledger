@@ -40,8 +40,23 @@ function makeResult(id: number): ISearchResultProps {
   };
 }
 
+function makeGraded(
+  judgments: Array<[number, 0 | 1 | 2 | 3]>,
+  tags: string[] = [],
+): IGoldenTestCaseProps {
+  return {
+    id:               1,
+    query:            'test query',
+    tags,
+    judgments:        judgments.map(([document_id, grade]) => ({ document_id, grade })),
+    // Deprecated field kept during migration; task 6 removes it.
+    expected_doc_ids: [],
+  };
+}
+
+// Legacy helper preserved for existing binary tests. Every doc becomes grade 3.
 function makeTestCase(expected_doc_ids: number[]): IGoldenTestCaseProps {
-  return { id: 1, query: 'test query', expected_doc_ids, tags: [] };
+  return makeGraded(expected_doc_ids.map(id => [id, 3]));
 }
 
 // =============================================================================
@@ -246,6 +261,122 @@ describe('computeMetrics — normalizedDiscountedCumulativeGain', () => {
     const metrics = computeMetrics(results);
     // Only 1 normal result; NDCG = 1.0 / 1 = 1.0
     expect(metrics.normalizedDiscountedCumulativeGain).toBeCloseTo(1.0);
+  });
+});
+
+// =============================================================================
+// scoreTestCase — graded relevance (Phase 4.6.2)
+// =============================================================================
+
+describe('scoreTestCase — graded relevance', () => {
+  it('grade 2 counts as a hit', () => {
+    const testCase = makeGraded([[42, 2]]);
+    const scored = scoreTestCase(testCase, [makeResult(42)], 100);
+    expect(scored.hit).toBe(true);
+    expect(scored.firstResultHit).toBe(true);
+  });
+
+  it('grade 3 counts as a hit', () => {
+    const testCase = makeGraded([[42, 3]]);
+    const scored = scoreTestCase(testCase, [makeResult(42)], 100);
+    expect(scored.hit).toBe(true);
+    expect(scored.firstResultHit).toBe(true);
+  });
+
+  it('grade 1 does NOT count as a hit', () => {
+    const testCase = makeGraded([[42, 1]]);
+    const scored = scoreTestCase(testCase, [makeResult(42)], 100);
+    expect(scored.hit).toBe(false);
+    expect(scored.firstResultHit).toBe(false);
+  });
+
+  it('grade 0 does NOT count as a hit', () => {
+    const testCase = makeGraded([[42, 0]]);
+    const scored = scoreTestCase(testCase, [makeResult(42)], 100);
+    expect(scored.hit).toBe(false);
+    expect(scored.firstResultHit).toBe(false);
+  });
+
+  it('skips over grade-0 result, finds grade-3 at position 1', () => {
+    // Top result is grade 0 (wrong), second is grade 3 (right).
+    // hit = true, firstResultHit = false, position = 1
+    const testCase = makeGraded([[42, 0], [99, 3]]);
+    const scored = scoreTestCase(testCase, [makeResult(42), makeResult(99)], 100);
+    expect(scored.hit).toBe(true);
+    expect(scored.firstResultHit).toBe(false);
+    expect(scored.position).toBe(1);
+    expect(scored.reciprocalRank).toBeCloseTo(0.5);
+  });
+
+  it('missing doc defaults to grade 0 (treated as irrelevant)', () => {
+    // Doc 999 is returned but has no judgment. Doc 42 is graded 3 but at position 1.
+    const testCase = makeGraded([[42, 3]]);
+    const scored = scoreTestCase(testCase, [makeResult(999), makeResult(42)], 100);
+    expect(scored.firstResultHit).toBe(false);
+    expect(scored.hit).toBe(true);
+    expect(scored.position).toBe(1);
+  });
+
+  it('NDCG uses 2^grade - 1 gain — perfect ordering returns 1.0', () => {
+    // Judgments: doc 42 grade 3 (gain 7), doc 99 grade 2 (gain 3)
+    // Returned order: [42, 99] — this is the ideal ordering
+    // DCG = 7/log2(2) + 3/log2(3) = 7.0 + 1.8928 = 8.8928
+    // IDCG = same (already ideal)
+    // NDCG = 1.0
+    const testCase = makeGraded([[42, 3], [99, 2]]);
+    const scored = scoreTestCase(testCase, [makeResult(42), makeResult(99)], 100);
+    expect(scored.normalizedDiscountedCumulativeGain).toBeCloseTo(1.0, 3);
+  });
+
+  it('NDCG penalizes wrong order between grades 3 and 2', () => {
+    // Same judgments, reversed order
+    // DCG = 3/log2(2) + 7/log2(3) = 3.0 + 4.4167 = 7.4167
+    // IDCG = 7/log2(2) + 3/log2(3) = 7.0 + 1.8928 = 8.8928
+    // NDCG = 7.4167 / 8.8928 ≈ 0.8340
+    const testCase = makeGraded([[42, 3], [99, 2]]);
+    const scored = scoreTestCase(testCase, [makeResult(99), makeResult(42)], 100);
+    expect(scored.normalizedDiscountedCumulativeGain).toBeCloseTo(0.834, 2);
+  });
+
+  it('NDCG includes grade-1 contribution even though rate metrics do not', () => {
+    // grade-1 gets gain = 2^1 - 1 = 1, so it contributes to NDCG.
+    // But hit_threshold is 2, so grade-1 alone does NOT make the test pass.
+    // Judgments: [42 grade 3, 99 grade 1]
+    // Returned: [42, 99]
+    // DCG = 7/log2(2) + 1/log2(3) = 7.0 + 0.6309 = 7.6309
+    // IDCG = 7/log2(2) + 1/log2(3) = 7.6309
+    // NDCG = 1.0
+    const testCase = makeGraded([[42, 3], [99, 1]]);
+    const scored = scoreTestCase(testCase, [makeResult(42), makeResult(99)], 100);
+    expect(scored.normalizedDiscountedCumulativeGain).toBeCloseTo(1.0, 3);
+    // Recall denominator uses grade >= 2 only, so doc 99 (grade 1) is excluded
+    expect(scored.expectedTotal).toBe(1);
+    expect(scored.expectedFound).toBe(1);
+  });
+
+  it('empty judgments = out-of-scope, passes only on zero results', () => {
+    const testCase = makeGraded([]);
+    const passed = scoreTestCase(testCase, [], 100);
+    const failed = scoreTestCase(testCase, [makeResult(42)], 100);
+    expect(passed.hit).toBe(true);
+    expect(failed.hit).toBe(false);
+  });
+
+  it('all-zero-grade judgments = out-of-scope', () => {
+    const testCase = makeGraded([[42, 0], [99, 0]]);
+    const passed = scoreTestCase(testCase, [], 100);
+    const failed = scoreTestCase(testCase, [makeResult(42)], 100);
+    expect(passed.hit).toBe(true);
+    expect(failed.hit).toBe(false);
+  });
+
+  it('recall denominator counts only grade >= 2', () => {
+    // 3 judgments: grades [3, 2, 1]. Relevant (grade >= 2) = 2 docs.
+    // Returned finds only doc with grade 3 → recall denominator = 2, numerator = 1
+    const testCase = makeGraded([[42, 3], [99, 2], [7, 1]]);
+    const scored = scoreTestCase(testCase, [makeResult(42)], 100);
+    expect(scored.expectedTotal).toBe(2);
+    expect(scored.expectedFound).toBe(1);
   });
 });
 

@@ -45,7 +45,12 @@ const sampleMetrics: IEvalMetricsProps = {
 };
 
 const sampleResult: ITestResultProps = {
-  testCase: { id: 1, query: 'test query', expected_doc_ids: [42], tags: ['search'] },
+  testCase: {
+    id:        1,
+    query:     'test query',
+    tags:      ['search'],
+    judgments: [{ document_id: 42, grade: 3 }],
+  },
   returnedIds: [42, 99],
   returnedScores: [0.9, 0.7],
   hit: true,
@@ -102,20 +107,20 @@ describe('saveEvalRun', () => {
     expect(insertedRow.results_by_tag).toEqual(sampleMetrics.tagStats);
     expect(insertedRow.missed_queries).toEqual(
       sampleMetrics.missed.map(missedResult => ({
-        query: missedResult.testCase.query,
-        tags: missedResult.testCase.tags,
-        expected: missedResult.testCase.expected_doc_ids,
-        got: missedResult.returnedIds,
+        query:     missedResult.testCase.query,
+        tags:      missedResult.testCase.tags,
+        judgments: missedResult.testCase.judgments,
+        got:       missedResult.returnedIds,
         gotScores: missedResult.returnedScores,
       })),
     );
     expect(insertedRow.per_query_results).toHaveLength(1);
     expect(insertedRow.per_query_results[0]).toMatchObject({
-      query: sampleResult.testCase.query,
-      tags: sampleResult.testCase.tags,
-      expectedDocIds: sampleResult.testCase.expected_doc_ids,
+      query:                              sampleResult.testCase.query,
+      tags:                               sampleResult.testCase.tags,
+      judgments:                          sampleResult.testCase.judgments,
       normalizedDiscountedCumulativeGain: sampleResult.normalizedDiscountedCumulativeGain,
-      returnedScores: sampleResult.returnedScores,
+      returnedScores:                     sampleResult.returnedScores,
     });
   });
 

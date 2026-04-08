@@ -58,7 +58,7 @@ export interface IEvalRunRowProps {
   mean_reciprocal_rank:                  number | null;
   normalized_discounted_cumulative_gain: number | null;
   results_by_tag:                        Record<string, { total: number; hits: number; firstHits: number }> | null;
-  missed_queries:                        Array<{ query: string; tags: string[]; expected: number[]; got: number[]; gotScores: number[] }> | null;
+  missed_queries:                        Array<{ query: string; tags: string[]; judgments: Array<{ document_id: number; grade: number }>; got: number[]; gotScores: number[] }> | null;
   per_query_results:                     Array<Record<string, unknown>> | null;
   confidence_intervals:                  IMetricConfidenceIntervalsProps | null;
   score_calibration:                     IScoreCalibrationProps | null;
@@ -90,16 +90,16 @@ export async function saveEvalRun(
     coverage_analysis:                     coverageAnalysis ?? null,
     results_by_tag:                        metrics.tagStats,
     missed_queries:        metrics.missed.map(missedResult => ({
-      query:          missedResult.testCase.query,
-      tags:           missedResult.testCase.tags,
-      expected:       missedResult.testCase.expected_doc_ids,
-      got:            missedResult.returnedIds,
-      gotScores:      missedResult.returnedScores,
+      query:     missedResult.testCase.query,
+      tags:      missedResult.testCase.tags,
+      judgments: missedResult.testCase.judgments,
+      got:       missedResult.returnedIds,
+      gotScores: missedResult.returnedScores,
     })),
     per_query_results: results.map(testResult => ({
       query:                              testResult.testCase.query,
       tags:                               testResult.testCase.tags,
-      expectedDocIds:                     testResult.testCase.expected_doc_ids,
+      judgments:                          testResult.testCase.judgments,
       hit:                                testResult.hit,
       firstResultHit:                     testResult.firstResultHit,
       position:                           testResult.position,
