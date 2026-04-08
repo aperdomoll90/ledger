@@ -49,7 +49,7 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
 
   const { data: testCases, error } = await clients.supabase
     .from('eval_golden_dataset')
-    .select('id, query, expected_doc_ids, tags')
+    .select('id, query, expected_doc_ids, tags, judgments:eval_golden_judgments(document_id, grade)')
     .order('id');
 
   if (error || !testCases) {
@@ -159,7 +159,7 @@ export async function sweepThreshold(config: LedgerConfig, options: ISweepOption
 
   const { data: testCases, error } = await clients.supabase
     .from('eval_golden_dataset')
-    .select('id, query, expected_doc_ids, tags')
+    .select('id, query, expected_doc_ids, tags, judgments:eval_golden_judgments(document_id, grade)')
     .order('id');
 
   if (error || !testCases) {

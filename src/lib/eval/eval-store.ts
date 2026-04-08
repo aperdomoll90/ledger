@@ -32,6 +32,8 @@ export const CURRENT_SEARCH_CONFIG: IEvalConfigProps = {
   context_enrichment:       true,
   context_enrichment_model: 'gpt-4o-mini',
   reranker:                 'none',
+  hit_threshold:            2,
+  ndcg_gain_formula:        '2^g - 1',
 };
 
 export interface ISaveEvalRunProps {

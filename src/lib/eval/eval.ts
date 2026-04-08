@@ -8,11 +8,20 @@ import type { ISearchResultProps } from '../search/ai-search.js';
 // Types
 // =============================================================================
 
+export type TGradeValue = 0 | 1 | 2 | 3;
+
+export interface IJudgmentProps {
+  document_id: number;
+  grade:       TGradeValue;
+}
+
 export interface IGoldenTestCaseProps {
-  id: number;
-  query: string;
+  id:               number;
+  query:            string;
+  tags:             string[];
+  judgments:        IJudgmentProps[];
+  /** @deprecated kept during migration for parity harness; removed in task 6 */
   expected_doc_ids: number[];
-  tags: string[];
 }
 
 export interface ITestResultProps {
