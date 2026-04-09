@@ -1843,3 +1843,65 @@ Design spec written: [docs/superpowers/specs/2026-04-07-phase-4.6.2-graded-relev
 1. User reviews spec at [docs/superpowers/specs/2026-04-07-phase-4.6.2-graded-relevance-design.md](docs/superpowers/specs/2026-04-07-phase-4.6.2-graded-relevance-design.md)
 2. Invoke `writing-plans` skill to produce implementation plan
 3. Execute per plan: migration → types/scoring → conversion script → dry-run parity check → rejudging tool → rejudge → run 14 → drop `expected_doc_ids`
+
+## Session 36 — 2026-04-08
+
+### Phase 4.6.2 Execution (Tasks 1–7)
+
+Worked through the implementation plan for graded relevance. Committed Tasks 1–6. Task 7 dry-run surfaced an environment shift — documented below.
+
+**Setup changes:**
+- Installed `psql` (postgresql-client 17.9) and configured `DATABASE_URL` with the Supabase Session Pooler URI. Direct connection is IPv6-only and not reachable from this machine; pooler on port 5432 is IPv4 and supports schema changes.
+- Enables running pgTAP, migrations, and ad-hoc SQL from the code instead of pasting into the dashboard.
+
+**Task 1 — pgTAP red phase:** `tests/sql/002-eval-golden-judgments.sql` with 8 tests defining the contract for the new table + RPC functions. Ran against current schema — all assertions failed with "relation does not exist" as expected.
+
+**Task 2 — Migration:** `src/migrations/007-eval-golden-judgments.sql` creates the `eval_golden_judgments` table (FK cascades to `eval_golden_dataset` and `documents`, `CHECK (grade BETWEEN 0 AND 3)`, `UNIQUE (golden_id, document_id)`, audit columns), 3 indexes, RLS with service-role policy, and 3 RPC functions (`judgment_create`, `judgment_update`, `judgment_delete`). All 8 pgTAP tests green after apply.
+
+**Task 3 — Auto-conversion:** `src/scripts/convert-judgments-to-graded.ts` reads the legacy `expected_doc_ids` column and creates grade-3 rows via the `judgment_create` RPC. **Result: 144 queries scanned, 231 grade-3 judgments inserted, 0 errors.** Cross-checked with psql: `sum(array_length(expected_doc_ids)) = count(grade=3) = 231`. Tagged `judged_by='converter-phase-4.6.2'` for rollback.
+
+**Task 4 — TS types + loader join:** Expand phase of the parallel-change pattern.
+- `eval.ts`: added `TGradeValue`, `IJudgmentProps`, extended `IGoldenTestCaseProps` with `judgments[]` (kept `expected_doc_ids` temporarily with `@deprecated`)
+- `eval-store.ts`: `CURRENT_SEARCH_CONFIG` now includes `hit_threshold: 2` and `ndcg_gain_formula: '2^g - 1'`
+- `commands/eval.ts`: loader selects joined via PostgREST nested select `judgments:eval_golden_judgments(document_id, grade)`
+
+**Task 5 — Parity harness:** `tests/eval-graded-parity.test.ts` is a gated integration test (`PARITY_TEST=1`) that verifies the judgments table is a faithful graded mirror of the legacy column. Two invariants: per-row check (every `expected_doc_id` has a matching grade-3) and aggregate count (sums match). Both passing.
+
+**Task 6 — Scoring rewrite:** `scoreTestCase` now reads `testCase.judgments` exclusively. Exported `HIT_THRESHOLD = 2`. NDCG uses `gain = 2^grade - 1` (TREC standard). Updated `computeMetrics` filter, `formatReport` header, missed-queries block, and `eval-store.ts` serialization. Also updated `eval-advanced.ts` (`computeScoreCalibration`, `computeCoverageAnalysis`) to use grade-based relevance. Deleted dead `src/scripts/eval-search.ts`. All 190 unit tests green, parity harness still green.
+
+### Task 7 — Dry-run sanity check — surfaced a corpus shift
+
+Expected behavior: with only grade-3 judgments in the table, graded scoring should mathematically match run 13 (grade 3 passes `>=2` threshold for every rate metric, and `2^3-1=7` is a constant in NDCG that cancels in IDCG).
+
+Observed:
+
+| Metric            | Run 13 | Task 7 dry-run | Δ     |
+|-------------------|--------|----------------|-------|
+| Hit rate          | 97.0%  | 94.7%          | -2.3  |
+| First-result acc  | 65.2%  | 59.8%          | -5.4  |
+| Recall            | 81.4%  | 78.4%          | -3.0  |
+| MRR               | 0.760  | 0.712          | -0.048|
+| NDCG              | 0.769  | 0.725          | -0.044|
+
+**Root cause: the corpus changed between run 13 (2026-04-07) and today (2026-04-08).**
+
+Querying `documents` showed 11 new rows with ids 144–155. Several were auto-synced from local `docs/*.md` edits during pass-1 doc updates earlier in this session:
+
+- `#151 ledger-architecture-database-tables`
+- `#152 ledger-architecture-database-schemas`
+- `#153 ledger-architecture-database-indexes`
+- `#155 reference-rag-evaluation`
+- plus `#146`–`#150` from earlier this week
+
+These new docs now compete in retrieval. They surface for many queries and push the canonical answers down, lowering first-result accuracy and MRR. The scoring is correct; the retrieval is correct; the corpus is just different.
+
+Previously-diagnosed query #4 from run 12 ("how does Ledger prevent data loss during updates") still returns the exact same top-3 doc ids as before, confirming the scoring path is stable. The divergence is driven by queries that newly pick up the added docs.
+
+**Decision:** proceed with Option A from the plan. Do not save this as run 14 (it's diagnostic only). Continue to Task 8. Task 9's rejudging pass will capture the defensible alternatives against today's corpus naturally. Run 14 (Task 10) will be the honest post-graded baseline, documented alongside the corpus-shift context.
+
+**Lesson:** golden datasets assume a fixed corpus. When the corpus drifts, historical metrics stop being comparable unless you snapshot and restore. For Ledger's scale (personal-use, low frequency), periodic rejudging against the live corpus is the pragmatic answer — which is exactly what Phase 4.6.2 does.
+
+### Branch state
+- 7 commits ahead of `origin/main`
+- All tests green (190 passing, 2 skipped parity cases gated by env var)
+- Task 8 (build `ledger eval:judge` CLI) is the next step
