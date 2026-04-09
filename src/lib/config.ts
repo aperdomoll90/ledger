@@ -108,7 +108,7 @@ export function loadConfig(): LedgerConfig {
       process.env.SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY,
     ),
-    openai: new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+    openai: new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 5 }),
     cohereApiKey: process.env.COHERE_API_KEY || undefined,
   };
 }

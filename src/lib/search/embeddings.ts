@@ -4,6 +4,7 @@
 
 import { createHash } from 'crypto';
 import type { ChunkStrategy, ChunkContentType, IOpenAIClientProps, ISupabaseClientProps, IChunkConfigProps } from '../documents/classification.js';
+import { openaiLimiter, updateLimitsFromHeaders } from '../rate-limiter.js';
 
 // =============================================================================
 // Chunk interface — what chunkText() returns
@@ -246,11 +247,15 @@ function forceCharSplit(
  * Similar texts produce similar numbers — that's how search works.
  */
 export async function generateEmbedding(openai: IOpenAIClientProps, text: string): Promise<number[]> {
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: text,
+  return openaiLimiter.schedule(async () => {
+    const { data, response } = await openai.embeddings.create({
+      model: EMBEDDING_MODEL,
+      input: text,
+    }).withResponse();
+
+    await updateLimitsFromHeaders(openaiLimiter, response.headers);
+    return data.data[0].embedding;
   });
-  return response.data[0].embedding;
 }
 
 /**

@@ -13,6 +13,7 @@
 // Search should never break because reranking failed.
 
 import type { ISearchResultProps } from './ai-search.js';
+import { cohereLimiter } from '../rate-limiter.js';
 
 const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 const COHERE_RERANK_MODEL = 'rerank-v3.5';
@@ -72,21 +73,23 @@ export async function rerankResults(
 
   let response: Response;
   try {
-    response = await fetch(COHERE_RERANK_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${options.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        query,
-        documents,
-        top_n: topN,
+    response = await cohereLimiter.schedule(() =>
+      fetch(COHERE_RERANK_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${options.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          query,
+          documents,
+          top_n: topN,
+        }),
       }),
-    });
+    );
   } catch (_networkError) {
-    // Network failure — return originals unchanged
+    // Network failure or limiter error — return originals unchanged
     return searchResults;
   }
 

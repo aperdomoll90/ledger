@@ -1120,13 +1120,29 @@ For budgeting and optimization:
 | `ef_construction` | Build-time search width | 128 | Higher = better index, slower builds |
 | `ef_search` | Query-time search width | 64-200 | Higher = better recall, slower queries |
 
+### Outbound API Rate Limiting
+
+External API calls (embedding generation, LLM enrichment, reranking) are subject to provider rate limits (RPM = Requests Per Minute, TPM = Tokens Per Minute). Without proactive pacing, bulk operations (reindex, restore, large document ingestion) can overwhelm the API and trigger 429 errors.
+
+**Production pattern (two layers):**
+1. **Proactive pacing** (e.g., Bottleneck): token bucket with reservoir, concurrency cap, minimum spacing between requests. Prevents most 429s.
+2. **Reactive retry** (SDK built-in): exponential backoff with jitter when 429s slip through. Most SDKs (OpenAI, Stripe, AWS) include this.
+
+**Adaptive adjustment:** Read rate limit headers from API responses (`x-ratelimit-remaining-requests`) and adjust the pacer's budget downward when the provider reports fewer remaining requests than expected.
+
+| Provider | Typical Limits (Tier 1) | Pacing Strategy                    |
+|----------|-------------------------|------------------------------------|
+| OpenAI   | 500 RPM, 200K TPM       | 90% of RPM limit as reservoir      |
+| Cohere   | 100 RPM (trial)         | 90% of RPM limit as reservoir      |
+| AWS      | Varies by service       | Adaptive token bucket (SDK built-in)|
+
 ### Caching Layers
 
-| Cache | What | Saves |
-|---|---|---|
-| **Query embedding cache** | Cached embeddings for repeated queries | API calls ($) |
-| **Semantic response cache** | Full responses for similar queries | LLM calls ($$) |
-| **Embedding cache** | Vectors keyed by content hash | Re-embedding unchanged docs |
+| Cache                        | What                                        | Saves                              |
+|------------------------------|---------------------------------------------|-------------------------------------|
+| **Query embedding cache**    | Cached embeddings for repeated queries      | API calls ($)                       |
+| **Semantic response cache**  | Full responses for similar queries          | LLM calls ($$)                      |
+| **Embedding cache**          | Vectors keyed by content hash               | Re-embedding unchanged docs         |
 
 ---
 

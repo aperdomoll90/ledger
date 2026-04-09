@@ -15,13 +15,27 @@ function makeMockSupabase() {
   };
 }
 
-// Mock OpenAI that handles both embeddings and chat completions
+// Mock OpenAI that handles both embeddings and chat completions.
+// embeddings.create() must return an object that:
+// 1. Works as a Promise (for legacy callers that just await it)
+// 2. Has .withResponse() (for the rate-limiter-aware path that reads headers)
+// This mimics the real OpenAI SDK's APIPromise behavior.
 function makeMockOpenAI() {
+  const embeddingData = { data: [{ embedding: new Array(1536).fill(0.01) }] };
+
+  function makeEmbeddingResponse() {
+    const promise = Promise.resolve(embeddingData);
+    return Object.assign(promise, {
+      withResponse: () => Promise.resolve({
+        data: embeddingData,
+        response: { headers: new Headers() },
+      }),
+    });
+  }
+
   return {
     embeddings: {
-      create: vi.fn().mockResolvedValue({
-        data: [{ embedding: new Array(1536).fill(0.01) }],
-      }),
+      create: vi.fn().mockImplementation(() => makeEmbeddingResponse()),
     },
     chat: {
       completions: {

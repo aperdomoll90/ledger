@@ -145,7 +145,14 @@ export interface ISupabaseClientProps {
 // APIPromise which is thenable but not a strict Promise. Same pattern we use for
 // Supabase RPC calls.
 export interface IOpenAIClientProps {
-  embeddings: { create: (params: { model: string; input: string }) => Promise<{ data: Array<{ embedding: number[] }> }> };
+  embeddings: {
+    create: (params: { model: string; input: string }) => Promise<{ data: Array<{ embedding: number[] }> }> & {
+      withResponse: () => Promise<{
+        data: { data: Array<{ embedding: number[] }> };
+        response: { headers: Headers };
+      }>;
+    };
+  };
   chat: {
     completions: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

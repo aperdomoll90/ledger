@@ -2007,8 +2007,61 @@ Local `docs/*.md` edits via the Edit tool don't trigger the post-write Ledger sy
 Reviewed full devlog history. Added 6 missing error/solution pairs to `ledger-errorlog` (#19): HNSW subquery limitation (S28), Vitest heap OOM (S30), DISTINCT ON ordering bug (S34), IPv6 direct connection (S36), rate limit crash (S36), MCP large content (S36).
 
 ### Next Session
-1. **Rate-aware API client layer** — brainstorm + plan + implement. Fixes rate limit crashes for large doc ingestion.
-2. **Error handling audit** — systematic review of all OpenAI/Supabase call sites
+1. **Rate-aware API client layer** -- brainstorm + plan + implement. Fixes rate limit crashes for large doc ingestion.
+2. **Error handling audit** -- systematic review of all OpenAI/Supabase call sites
 3. **Retry the 2 failed doc syncs** (reference-rag-evaluation.md, reference-rag-system-architecture.md) after rate limiter is built
 4. Phase 4.5.5: Semantic cache (HNSW fuzzy query matching)
 5. Revisit reranker if metrics plateau
+
+## Session 37 -- 2026-04-09
+
+### Rate-Aware API Client Layer
+
+Built proactive rate limiting for all external API calls. This was the #1 infrastructure gap from S36 (2 docs failed to sync due to OpenAI rate limiting during bulk ingestion).
+
+**Design phase:**
+- Researched how production SDKs handle rate limiting (OpenAI, Stripe, AWS, Bottleneck, p-retry, p-queue)
+- Key finding: OpenAI SDK already retries 429s with exponential backoff (default 2 retries). Missing piece was proactive pacing.
+- Design spec: `docs/superpowers/specs/2026-04-09-rate-aware-api-client-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-04-09-rate-aware-api-client.md`
+
+**Implementation (8 tasks, all complete):**
+- `src/lib/rate-limiter.ts` (new): provider-agnostic Bottleneck factory with presets (OpenAI Tier 1: 450 RPM, Cohere trial: 90 RPM), singleton instances, retry on 429/5xx with exponential backoff + jitter, adaptive header reading from OpenAI responses
+- `tests/rate-limiter.test.ts` (new): 13 tests covering factory, presets, retry behavior, header adaptation
+- `src/lib/config.ts`: bumped OpenAI SDK maxRetries from 2 to 5
+- `src/lib/search/embeddings.ts`: generateEmbedding() routes through openaiLimiter with .withResponse() for header reading
+- `src/lib/search/chunk-context-enrichment.ts`: Contextual Retrieval calls route through openaiLimiter
+- `src/lib/search/reranker.ts`: Cohere calls route through cohereLimiter (ready for when reranker is re-enabled)
+- `src/lib/documents/classification.ts`: IOpenAIClientProps updated to support .withResponse()
+- `tests/document-operations.test.ts`: mock updated to support .withResponse() (6 tests were failing)
+- `docs/reference-rag-system-architecture.md`: added "Outbound API Rate Limiting" section to Scaling chapter
+
+**Documentation updates:**
+- Ledger error log (#19): updated S36 rate limit entry with fix details
+- Ledger architecture (#137): update saved locally at `docs/ledger-architecture-update-s37.md` (too large for MCP transport, needs sync via sync-local-docs.ts)
+- RAG reference doc: added outbound rate limiting as standard production pattern
+
+**Test results:** 212 passing (199 prior + 13 new rate limiter tests). Build clean.
+
+**Key decisions:**
+- Bottleneck over custom implementation (industry standard, 14M weekly downloads, stable since 2019)
+- Function-level wrapping over client-level proxy (only 2 hot paths + reranker, simpler and more explicit)
+- Shared OpenAI limiter instance across embeddings and Contextual Retrieval (same RPM budget)
+- Separate Cohere limiter instance (independent rate limit)
+- 90% safety margin on stated limits (450 of 500 RPM for OpenAI, 90 of 100 RPM for Cohere)
+
+**CLAUDE.md updates:**
+- Added "Production-grade defaults" to Core philosophy
+- Added feedback memory: always recommend industry-standard solutions
+- Added feedback memory: always explain acronyms and tech terms
+
+### Branch state
+- Branch: `feat/rate-aware-api-client`
+- All tests green (212 passing, 2 skipped)
+- Build clean
+
+### Next
+1. Sync architecture update to Ledger (#137) via sync-local-docs.ts
+2. Error handling audit across all OpenAI/Supabase call sites
+3. Phase 4.5.5: Semantic cache
+4. Revisit reranker if first-result accuracy plateaus
