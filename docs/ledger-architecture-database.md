@@ -2,7 +2,7 @@
 
 > Overview of Ledger's database: 15 tables, 21 functions, 61 indexes. Supabase (Postgres + pgvector).
 >
-> Updated: 2026-04-03. For full details, see the child docs linked below.
+> Updated: 2026-04-09 (Phase 4.6.2). For full details, see the child docs linked below.
 
 The database is the backbone of Ledger. Documents go in, get chunked and embedded for search, and every change is tracked. Postgres handles the business logic — TypeScript just prepares data (chunks, embeddings, hashes) and calls RPC functions. The database does the rest: transactions, auditing, versioning, access control.
 
@@ -11,13 +11,13 @@ The database is the backbone of Ledger. Documents go in, get chunked and embedde
 ## Table of Contents
 
 - [Detail Documents](#detail-documents)
-- [Tables (13)](#tables-13)
+- [Tables (15)](#tables-15)
   - [By function](#by-function)
   - [How data flows between tables](#how-data-flows-between-tables)
   - [Two storage patterns](#two-storage-patterns)
   - [Two evaluation subsystems](#two-evaluation-subsystems)
 - [Functions (21)](#functions-21)
-- [Indexes (56)](#indexes-56)
+- [Indexes (61)](#indexes-61)
 - [Key Design Patterns](#key-design-patterns)
 - [Infrastructure](#infrastructure)
 
@@ -27,13 +27,13 @@ The database is the backbone of Ledger. Documents go in, get chunked and embedde
 
 | Document                                       | What it covers                                |
 |------------------------------------------------|-----------------------------------------------|
-| `ledger-architecture-database-tables.md`       | 13 table schemas — columns, types, SQL        |
-| `ledger-architecture-database-functions.md`    | 17 Postgres functions — full SQL, active/unused status |
-| `ledger-architecture-database-indexes.md`      | 56 indexes, extensions, triggers, RLS, realtime, cron |
+| `ledger-architecture-database-tables.md`       | 15 table schemas — columns, types, SQL        |
+| `ledger-architecture-database-functions.md`    | 21 Postgres functions — full SQL, active/unused status |
+| `ledger-architecture-database-indexes.md`      | 61 indexes, extensions, triggers, RLS, realtime, cron |
 
 ---
 
-## Tables (13)
+## Tables (15)
 
 ### By function
 
@@ -105,7 +105,7 @@ See `ledger-architecture-database-functions.md` for full SQL.
 
 ---
 
-## Indexes (56)
+## Indexes (61)
 
 | Table                          | Count | Key indexes                                           |
 |--------------------------------|-------|-------------------------------------------------------|
