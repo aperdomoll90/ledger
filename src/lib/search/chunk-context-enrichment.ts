@@ -16,6 +16,7 @@
 // 5. Search results return the original chunk content (not the summary)
 
 import type { IChunkProps } from './embeddings.js';
+import { openaiLimiter } from '../rate-limiter.js';
 
 const CONTEXT_ENRICHMENT_MODEL = 'gpt-4o-mini';
 
@@ -92,15 +93,17 @@ export async function generateContextSummaries(
       .replace('{DOCUMENT_CONTENT}', documentContent)
       .replace('{CHUNK_CONTENT}', chunk.content);
 
-    const response = await openai.chat.completions.create({
-      model: CONTEXT_ENRICHMENT_MODEL,
-      messages: [
-        { role: 'system', content: 'You are a precise technical writer. Output only the context summary, nothing else.' },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens: 150,
-      temperature: 0,
-    });
+    const response = await openaiLimiter.schedule(() =>
+      openai.chat.completions.create({
+        model: CONTEXT_ENRICHMENT_MODEL,
+        messages: [
+          { role: 'system', content: 'You are a precise technical writer. Output only the context summary, nothing else.' },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 150,
+        temperature: 0,
+      }),
+    );
 
     const summary = (response.choices[0].message.content ?? '').trim();
 
