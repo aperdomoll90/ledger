@@ -1,6 +1,6 @@
 # Ledger — Database Schemas
 
-> Ground-truth schema reference generated from live Supabase. 14 tables, organized by function. Updated: 2026-04-08 (Phase 4.6.2 graded relevance).
+> Ground-truth schema reference generated from live Supabase. 15 tables, organized by function. Updated: 2026-04-09 (Phase 4.6.2 graded relevance).
 >
 > For generic RAG patterns, see `reference-rag-database-schemas.md`. This doc covers what Ledger actually has deployed.
 
