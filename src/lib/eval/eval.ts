@@ -8,12 +8,26 @@ import type { ISearchResultProps } from '../search/ai-search.js';
 // Types
 // =============================================================================
 
-export interface IGoldenTestCaseProps {
-  id: number;
-  query: string;
-  expected_doc_ids: number[];
-  tags: string[];
+export type TGradeValue = 0 | 1 | 2 | 3;
+
+export interface IJudgmentProps {
+  document_id: number;
+  grade:       TGradeValue;
 }
+
+export interface IGoldenTestCaseProps {
+  id:        number;
+  query:     string;
+  tags:      string[];
+  judgments: IJudgmentProps[];
+}
+
+/**
+ * Rate metrics (hit rate, first-result accuracy, recall, MRR) count a result
+ * as "good" when its grade is at or above this threshold. Only NDCG uses the
+ * full 2^g - 1 gain function across all grades.
+ */
+export const HIT_THRESHOLD: TGradeValue = 2;
 
 export interface ITestResultProps {
   testCase: IGoldenTestCaseProps;
@@ -52,26 +66,36 @@ export interface IEvalMetricsProps {
 }
 
 // =============================================================================
-// NDCG@k helper
+// NDCG@k helper — graded (2^g - 1 gain, TREC 4-level)
 // =============================================================================
 
-function computeNormalizedDiscountedCumulativeGain(returnedIds: number[], expectedDocIds: number[]): number {
-  if (expectedDocIds.length === 0) return 0;
+function gradeGain(grade: TGradeValue): number {
+  return Math.pow(2, grade) - 1;
+}
 
-  // DCG: sum of relevance / log2(position + 2) for each returned result
-  // Binary relevance: 1 if doc is expected, 0 otherwise
-  // Position is 0-indexed, add 2 to avoid log2(1) = 0
+function computeNormalizedDiscountedCumulativeGain(
+  returnedIds:  number[],
+  gradeByDocId: Map<number, TGradeValue>,
+): number {
+  // Collect all non-zero grades (any doc that contributes to ideal ranking).
+  const relevantGrades: TGradeValue[] = [];
+  for (const grade of gradeByDocId.values()) {
+    if (grade >= 1) relevantGrades.push(grade);
+  }
+  if (relevantGrades.length === 0) return 0;
+
+  // DCG against the returned order
   let discountedCumulativeGain = 0;
   for (let position = 0; position < returnedIds.length; position++) {
-    const relevance = expectedDocIds.includes(returnedIds[position]) ? 1 : 0;
-    discountedCumulativeGain += relevance / Math.log2(position + 2);
+    const grade = gradeByDocId.get(returnedIds[position]) ?? 0;
+    discountedCumulativeGain += gradeGain(grade as TGradeValue) / Math.log2(position + 2);
   }
 
-  // IDCG: ideal DCG if all expected docs were ranked first
+  // IDCG: ideal ordering is grades sorted descending
+  const idealGrades = relevantGrades.slice().sort((gradeA, gradeB) => gradeB - gradeA);
   let idealDiscountedCumulativeGain = 0;
-  const idealCount = Math.min(expectedDocIds.length, returnedIds.length);
-  for (let position = 0; position < idealCount; position++) {
-    idealDiscountedCumulativeGain += 1 / Math.log2(position + 2);
+  for (let position = 0; position < idealGrades.length; position++) {
+    idealDiscountedCumulativeGain += gradeGain(idealGrades[position]) / Math.log2(position + 2);
   }
 
   if (idealDiscountedCumulativeGain === 0) return 0;
@@ -83,51 +107,63 @@ function computeNormalizedDiscountedCumulativeGain(returnedIds: number[], expect
 // =============================================================================
 
 export function scoreTestCase(
-  testCase: IGoldenTestCaseProps,
-  searchResults: ISearchResultProps[],
+  testCase:       IGoldenTestCaseProps,
+  searchResults:  ISearchResultProps[],
   responseTimeMs: number,
 ): ITestResultProps {
-  const returnedIds = searchResults.map(result => result.id);
+  const returnedIds    = searchResults.map(result => result.id);
   const returnedScores = searchResults.map(result => result.score ?? result.similarity ?? 0);
-  const isOutOfScope = testCase.expected_doc_ids.length === 0;
+
+  // Build grade lookup. Missing doc defaults to grade 0 (treated as irrelevant).
+  const gradeByDocId = new Map<number, TGradeValue>();
+  for (const judgment of testCase.judgments) {
+    gradeByDocId.set(judgment.document_id, judgment.grade);
+  }
+
+  const relevantJudgments = testCase.judgments.filter(judgment => judgment.grade >= HIT_THRESHOLD);
+  const isOutOfScope = relevantJudgments.length === 0;
 
   if (isOutOfScope) {
     return {
       testCase,
       returnedIds,
       returnedScores,
-      hit: searchResults.length === 0,
+      hit:            searchResults.length === 0,
       firstResultHit: searchResults.length === 0,
-      expectedFound: 0,
-      expectedTotal: 0,
-      position: null,
+      expectedFound:  0,
+      expectedTotal:  0,
+      position:       null,
       responseTimeMs,
       reciprocalRank: 0,
       normalizedDiscountedCumulativeGain: 0,
     };
   }
 
-  const foundExpected = testCase.expected_doc_ids.filter(expectedId =>
-    returnedIds.includes(expectedId),
-  );
+  // First returned doc with grade >= HIT_THRESHOLD
+  let firstHitPosition: number | null = null;
+  for (let position = 0; position < returnedIds.length; position++) {
+    const grade = gradeByDocId.get(returnedIds[position]) ?? 0;
+    if (grade >= HIT_THRESHOLD) {
+      firstHitPosition = position;
+      break;
+    }
+  }
 
-  const firstExpectedPosition = testCase.expected_doc_ids
-    .map(expectedId => returnedIds.indexOf(expectedId))
-    .filter(position => position >= 0)
-    .sort((positionA, positionB) => positionA - positionB)[0] ?? null;
+  const topGrade   = returnedIds.length > 0 ? (gradeByDocId.get(returnedIds[0]) ?? 0) : 0;
+  const foundCount = returnedIds.filter(docId => (gradeByDocId.get(docId) ?? 0) >= HIT_THRESHOLD).length;
 
   return {
     testCase,
     returnedIds,
     returnedScores,
-    hit: foundExpected.length > 0,
-    firstResultHit: testCase.expected_doc_ids.includes(returnedIds[0]),
-    expectedFound: foundExpected.length,
-    expectedTotal: testCase.expected_doc_ids.length,
-    position: firstExpectedPosition,
+    hit:            firstHitPosition !== null,
+    firstResultHit: topGrade >= HIT_THRESHOLD,
+    expectedFound:  foundCount,
+    expectedTotal:  relevantJudgments.length,
+    position:       firstHitPosition,
     responseTimeMs,
-    reciprocalRank: firstExpectedPosition !== null ? 1 / (firstExpectedPosition + 1) : 0,
-    normalizedDiscountedCumulativeGain: computeNormalizedDiscountedCumulativeGain(returnedIds, testCase.expected_doc_ids),
+    reciprocalRank: firstHitPosition !== null ? 1 / (firstHitPosition + 1) : 0,
+    normalizedDiscountedCumulativeGain: computeNormalizedDiscountedCumulativeGain(returnedIds, gradeByDocId),
   };
 }
 
@@ -135,9 +171,12 @@ export function scoreTestCase(
 // Aggregate metrics from scored results
 // =============================================================================
 
+const hasRelevantJudgment = (result: ITestResultProps): boolean =>
+  result.testCase.judgments.some(judgment => judgment.grade >= HIT_THRESHOLD);
+
 export function computeMetrics(results: ITestResultProps[]): IEvalMetricsProps {
-  const normalResults = results.filter(result => result.testCase.expected_doc_ids.length > 0);
-  const outOfScopeResults = results.filter(result => result.testCase.expected_doc_ids.length === 0);
+  const normalResults     = results.filter(hasRelevantJudgment);
+  const outOfScopeResults = results.filter(result => !hasRelevantJudgment(result));
 
   const totalNormal = normalResults.length;
   const hits = normalResults.filter(result => result.hit).length;
@@ -195,7 +234,7 @@ export function formatReport(metrics: IEvalMetricsProps): string {
   const lines: string[] = [];
 
   lines.push('='.repeat(60));
-  lines.push('Results');
+  lines.push(`Results — hit_threshold=${HIT_THRESHOLD}, ndcg_gain=2^g-1`);
   lines.push('='.repeat(60));
   lines.push('');
   lines.push(`Test cases:          ${metrics.totalCases} total (${metrics.normalCases} normal, ${metrics.outOfScopeCases} out-of-scope)`);
@@ -212,9 +251,12 @@ export function formatReport(metrics: IEvalMetricsProps): string {
   lines.push('');
 
   if (metrics.missed.length > 0) {
-    lines.push('MISSED QUERIES (expected doc not found in results):');
+    lines.push(`MISSED QUERIES (no returned doc at grade >= ${HIT_THRESHOLD}):`);
     for (const miss of metrics.missed) {
-      lines.push(`  "${miss.testCase.query}" — expected [${miss.testCase.expected_doc_ids.join(', ')}], got [${miss.returnedIds.slice(0, 5).join(', ')}]`);
+      const relevantDocs = miss.testCase.judgments
+        .filter(judgment => judgment.grade >= HIT_THRESHOLD)
+        .map(judgment => `${judgment.document_id}(g${judgment.grade})`);
+      lines.push(`  "${miss.testCase.query}" — relevant [${relevantDocs.join(', ')}], got [${miss.returnedIds.slice(0, 5).join(', ')}]`);
     }
     lines.push('');
   }

@@ -1,14 +1,14 @@
 # Ledger — Database Indexes, Extensions, and Infrastructure
 
-> 56 indexes, 7 extensions, triggers, RLS, realtime, and cron job status.
+> 61 indexes, 7 extensions, triggers, RLS, realtime, and cron job status.
 >
-> Updated: 2026-04-03. Parent doc: `ledger-architecture-database.md`
+> Updated: 2026-04-08 (Phase 4.6.2 graded relevance). Parent doc: `ledger-architecture-database.md`
 
 ---
 
 ## Table of Contents
 
-- [Indexes (56 total)](#indexes-56-total)
+- [Indexes (61 total)](#indexes-61-total)
 - [Extensions](#extensions)
 - [Triggers](#triggers)
 - [Row-Level Security](#row-level-security)
@@ -18,7 +18,7 @@
 
 ---
 
-## Indexes (56 total)
+## Indexes (61 total)
 
 ### documents (12)
 
@@ -109,6 +109,13 @@ CREATE UNIQUE INDEX agents_api_key_hash_key           ON agents USING btree (api
 CREATE UNIQUE INDEX eval_golden_dataset_pkey           ON eval_golden_dataset USING btree (id);
 CREATE INDEX index_eval_golden_tags                    ON eval_golden_dataset USING gin (tags);
 
+-- eval_golden_judgments (5)
+CREATE UNIQUE INDEX eval_golden_judgments_pkey         ON eval_golden_judgments USING btree (id);
+CREATE UNIQUE INDEX eval_golden_judgments_unique       ON eval_golden_judgments USING btree (golden_id, document_id);
+CREATE INDEX idx_golden_judgments_golden_id            ON eval_golden_judgments USING btree (golden_id);
+CREATE INDEX idx_golden_judgments_document_id          ON eval_golden_judgments USING btree (document_id);
+CREATE INDEX idx_golden_judgments_grade                ON eval_golden_judgments USING btree (grade);
+
 -- eval_runs (1)
 CREATE UNIQUE INDEX eval_runs_pkey                     ON eval_runs USING btree (id);
 
@@ -146,7 +153,7 @@ CREATE UNIQUE INDEX embedding_models_pkey               ON embedding_models USIN
 
 ## Row-Level Security
 
-RLS enabled on all 14 tables. Current policy: service_role gets full access, anon gets nothing. Per-agent policies planned for Phase 6.
+RLS enabled on all 15 tables. Current policy: service_role gets full access, anon gets nothing. Per-agent policies planned for Phase 6.
 
 **Policy pattern** (same on every table):
 
@@ -173,6 +180,7 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 | `search_evaluations`           | Yes | Yes          | Yes          |
 | `search_evaluation_aggregates` | Yes | Yes          | Yes          |
 | `eval_golden_dataset`          | Yes | Yes          | Yes          |
+| `eval_golden_judgments`        | Yes | Yes          | Yes          |
 | `eval_runs`                    | Yes | Yes          | Yes          |
 
 ---
@@ -180,13 +188,15 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 ## Relationships
 
 ```
-documents ──< document_chunks     (1:N, CASCADE delete)
-documents ──< document_versions   (1:N)
-documents ──< audit_log           (1:N, no FK — survives deletion)
-documents >── embedding_models    (N:1, optional)
-document_chunks >── embedding_models (N:1, optional)
-query_cache >── embedding_models  (N:1, optional)
-ingestion_queue >── documents     (N:1, set on completion)
+documents ──< document_chunks         (1:N, CASCADE delete)
+documents ──< document_versions       (1:N)
+documents ──< audit_log               (1:N, no FK — survives deletion)
+documents ──< eval_golden_judgments   (1:N, CASCADE — judgments follow the doc)
+documents >── embedding_models        (N:1, optional)
+document_chunks >── embedding_models  (N:1, optional)
+query_cache >── embedding_models      (N:1, optional)
+ingestion_queue >── documents         (N:1, set on completion)
+eval_golden_dataset ──< eval_golden_judgments  (1:N, CASCADE)
 ```
 
 ---

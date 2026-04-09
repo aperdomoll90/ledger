@@ -25,6 +25,7 @@ import { backup, enableBackupCron, disableBackupCron } from './commands/backup.j
 import { restore } from './commands/restore.js';
 import { lint } from './commands/lint.js';
 import { evalSearch, sweepThreshold, showEvalRun } from './commands/eval.js';
+import { evalJudge } from './commands/eval-judge.js';
 
 process.on('unhandledRejection', (rejection) => {
   console.error(rejection instanceof Error ? rejection.message : String(rejection));
@@ -184,6 +185,15 @@ program
       process.exit(1);
     }
     await showEvalRun(config, runId, { full: options.full ?? false });
+  });
+
+program
+  .command('eval:judge')
+  .description('Resumable rejudging walkthrough — grade top-10 search results per query using TREC 4-level scale')
+  .option('--query <id>', 'start at a specific golden query id', (value: string) => parseInt(value, 10))
+  .action(async (options) => {
+    const config = loadConfig();
+    await evalJudge(config, { query: options.query });
   });
 
 // =============================================================================

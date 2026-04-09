@@ -3,7 +3,7 @@
 // score calibration for relevant vs irrelevant result distributions.
 // Pure functions — no I/O, no database calls.
 
-import { computeMetrics, type ITestResultProps } from './eval.js';
+import { computeMetrics, HIT_THRESHOLD, type ITestResultProps } from './eval.js';
 
 // =============================================================================
 // Types
@@ -206,24 +206,30 @@ export function computeDistribution(scores: number[]): IScoreDistributionProps {
 // =============================================================================
 
 /**
- * Separates scores into relevant (returned doc was in expected_doc_ids) and
+ * Separates scores into relevant (returned doc graded >= HIT_THRESHOLD) and
  * irrelevant buckets, then computes distribution stats for each.
  *
- * Out-of-scope results (expected_doc_ids is empty) are skipped entirely.
+ * Out-of-scope results (no judgments at grade >= HIT_THRESHOLD) are skipped.
  * Separation = relevant mean − irrelevant mean.
  */
 export function computeScoreCalibration(results: ITestResultProps[]): IScoreCalibrationProps {
-  const relevantScoreValues: number[] = [];
+  const relevantScoreValues:   number[] = [];
   const irrelevantScoreValues: number[] = [];
 
   for (const result of results) {
-    if (result.testCase.expected_doc_ids.length === 0) continue;
+    const relevantDocIds = new Set(
+      result.testCase.judgments
+        .filter(judgment => judgment.grade >= HIT_THRESHOLD)
+        .map(judgment => judgment.document_id),
+    );
+
+    if (relevantDocIds.size === 0) continue;
 
     for (let position = 0; position < result.returnedIds.length; position++) {
       const docId = result.returnedIds[position];
       const score = result.returnedScores[position];
 
-      if (result.testCase.expected_doc_ids.includes(docId)) {
+      if (relevantDocIds.has(docId)) {
         relevantScoreValues.push(score);
       } else {
         irrelevantScoreValues.push(score);
@@ -249,19 +255,23 @@ export function computeScoreCalibration(results: ITestResultProps[]): IScoreCali
  * Analyses golden set coverage — which parts of the knowledge base are
  * well-tested vs blind spots.
  *
- * - Normal queries: expected_doc_ids.length > 0
- * - Out-of-scope queries: expected_doc_ids.length === 0
+ * - Normal queries: at least one judgment at grade >= HIT_THRESHOLD
+ * - Out-of-scope queries: no judgments at grade >= HIT_THRESHOLD
  * - queriesPerTag: how many queries carry each tag
- * - expectedDocumentIds: deduplicated union of all expected_doc_ids, sorted ascending
+ * - expectedDocumentIds: deduplicated union of all grade>=HIT_THRESHOLD doc ids, sorted ascending
  */
 export function computeCoverageAnalysis(results: ITestResultProps[]): ICoverageAnalysisProps {
   let normalCount     = 0;
   let outOfScopeCount = 0;
-  const queriesPerTag: Record<string, number> = {};
-  const seenDocumentIds = new Set<number>();
+  const queriesPerTag:   Record<string, number> = {};
+  const seenDocumentIds: Set<number>            = new Set();
 
   for (const result of results) {
-    if (result.testCase.expected_doc_ids.length === 0) {
+    const relevantJudgments = result.testCase.judgments.filter(
+      judgment => judgment.grade >= HIT_THRESHOLD,
+    );
+
+    if (relevantJudgments.length === 0) {
       outOfScopeCount++;
     } else {
       normalCount++;
@@ -271,8 +281,8 @@ export function computeCoverageAnalysis(results: ITestResultProps[]): ICoverageA
       queriesPerTag[tag] = (queriesPerTag[tag] ?? 0) + 1;
     }
 
-    for (const documentId of result.testCase.expected_doc_ids) {
-      seenDocumentIds.add(documentId);
+    for (const judgment of relevantJudgments) {
+      seenDocumentIds.add(judgment.document_id);
     }
   }
 

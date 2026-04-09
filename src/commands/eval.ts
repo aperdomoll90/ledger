@@ -49,7 +49,7 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
 
   const { data: testCases, error } = await clients.supabase
     .from('eval_golden_dataset')
-    .select('id, query, expected_doc_ids, tags')
+    .select('id, query, tags, judgments:eval_golden_judgments(document_id, grade)')
     .order('id');
 
   if (error || !testCases) {
@@ -71,7 +71,7 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
     const result = scoreTestCase(testCase, searchResults, Date.now() - startTime);
     results.push(result);
 
-    const isOutOfScope = testCase.expected_doc_ids.length === 0;
+    const isOutOfScope = !testCase.judgments.some(judgment => judgment.grade >= 2);
     if (isOutOfScope) {
       const status = result.hit ? 'PASS' : `NOISE (${result.returnedIds.length} results)`;
       console.log(`  [${status}] "${testCase.query}" (out-of-scope)`);
@@ -159,7 +159,7 @@ export async function sweepThreshold(config: LedgerConfig, options: ISweepOption
 
   const { data: testCases, error } = await clients.supabase
     .from('eval_golden_dataset')
-    .select('id, query, expected_doc_ids, tags')
+    .select('id, query, tags, judgments:eval_golden_judgments(document_id, grade)')
     .order('id');
 
   if (error || !testCases) {
@@ -168,7 +168,9 @@ export async function sweepThreshold(config: LedgerConfig, options: ISweepOption
   }
 
   const goldenCases = testCases as IGoldenTestCaseProps[];
-  const normalCount = goldenCases.filter(testCase => testCase.expected_doc_ids.length > 0).length;
+  const normalCount = goldenCases.filter(
+    testCase => testCase.judgments.some(judgment => judgment.grade >= 2),
+  ).length;
   console.log(`\nLoaded ${goldenCases.length} test cases (${normalCount} normal)\n`);
 
   console.log('threshold | hit_rate | first_result | recall   | MRR    | NDCG   | avg_ms');
@@ -269,10 +271,23 @@ export async function showEvalRun(
     return;
   }
 
+  // Support both the new graded shape (judgments) and the legacy binary shape
+  // (expected) so eval:show still works against historical runs.
+  const expectedDocsFor = (missedQuery: Record<string, unknown>): Array<{ id: number; grade?: number }> => {
+    const judgments = missedQuery.judgments as Array<{ document_id: number; grade: number }> | undefined;
+    if (judgments && judgments.length > 0) {
+      return judgments
+        .filter(judgment => judgment.grade >= 2)
+        .map(judgment => ({ id: judgment.document_id, grade: judgment.grade }));
+    }
+    const expected = missedQuery.expected as number[] | undefined;
+    return (expected ?? []).map(id => ({ id }));
+  };
+
   // Resolve doc ids → names + snippets in one batch
   const allDocIds = new Set<number>();
   for (const missedQuery of missedQueries) {
-    for (const expectedId of missedQuery.expected) allDocIds.add(expectedId);
+    for (const expected of expectedDocsFor(missedQuery as unknown as Record<string, unknown>)) allDocIds.add(expected.id);
     for (const returnedId of missedQuery.got.slice(0, 3)) allDocIds.add(returnedId);
   }
   const lookup = await fetchDocLookup(supabase, Array.from(allDocIds));
@@ -288,8 +303,12 @@ export async function showEvalRun(
     console.log(`[${missedIndex + 1}] "${missedQuery.query}"`);
     if (missedQuery.tags.length > 0) console.log(`    tags: ${missedQuery.tags.join(', ')}`);
 
+    const expectedDocs = expectedDocsFor(missedQuery as unknown as Record<string, unknown>);
     console.log(`    expected:`);
-    for (const expectedId of missedQuery.expected) console.log(`      - ${formatDoc(expectedId)}`);
+    for (const expected of expectedDocs) {
+      const gradeLabel = expected.grade !== undefined ? ` (grade ${expected.grade})` : '';
+      console.log(`      - ${formatDoc(expected.id)}${gradeLabel}`);
+    }
 
     if (missedQuery.got.length === 0) {
       console.log(`    got: (none — zero results)`);

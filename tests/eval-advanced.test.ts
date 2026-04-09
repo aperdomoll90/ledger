@@ -32,8 +32,18 @@ function makeResult(id: number, score: number): ISearchResultProps {
   };
 }
 
-function makeTestCase(id: number, expected_doc_ids: number[]): IGoldenTestCaseProps {
-  return { id, query: `query-${id}`, expected_doc_ids, tags: [] };
+function makeTestCase(
+  id:               number,
+  expected_doc_ids: number[],
+  tags:             string[] = [],
+): IGoldenTestCaseProps {
+  // Every expected id becomes a grade-3 judgment — the 1:1 binary equivalent.
+  return {
+    id,
+    query:     `query-${id}`,
+    tags,
+    judgments: expected_doc_ids.map(document_id => ({ document_id, grade: 3 })),
+  };
 }
 
 // 20 test results: 16 hits, 4 misses — varied enough for non-trivial intervals
@@ -209,9 +219,9 @@ describe('computeCoverageAnalysis — counts queries per tag and total tags corr
   it('counts queries per tag and total tags correctly', () => {
     const testResults = [];
 
-    const testCaseA = { id: 1, query: 'query-1', expected_doc_ids: [10], tags: ['search', 'basic'] };
-    const testCaseB = { id: 2, query: 'query-2', expected_doc_ids: [20], tags: ['search', 'advanced'] };
-    const testCaseC = { id: 3, query: 'query-3', expected_doc_ids: [30], tags: ['basic'] };
+    const testCaseA = makeTestCase(1, [10], ['search', 'basic']);
+    const testCaseB = makeTestCase(2, [20], ['search', 'advanced']);
+    const testCaseC = makeTestCase(3, [30], ['basic']);
 
     testResults.push(scoreTestCase(testCaseA, [makeResult(10, 0.9)], 50));
     testResults.push(scoreTestCase(testCaseB, [makeResult(20, 0.9)], 50));
@@ -230,8 +240,8 @@ describe('computeCoverageAnalysis — counts queries per tag and total tags corr
     const testResults = [];
 
     // Two queries share doc 10 as expected; doc 20 appears once
-    const testCaseA = { id: 1, query: 'query-1', expected_doc_ids: [10, 20], tags: [] };
-    const testCaseB = { id: 2, query: 'query-2', expected_doc_ids: [10, 30], tags: [] };
+    const testCaseA = makeTestCase(1, [10, 20]);
+    const testCaseB = makeTestCase(2, [10, 30]);
 
     testResults.push(scoreTestCase(testCaseA, [makeResult(10, 0.9)], 50));
     testResults.push(scoreTestCase(testCaseB, [makeResult(10, 0.9)], 50));
@@ -248,9 +258,9 @@ describe('computeCoverageAnalysis — counts queries per tag and total tags corr
   it('counts out-of-scope queries separately', () => {
     const testResults = [];
 
-    const normalTestCase    = { id: 1, query: 'query-1', expected_doc_ids: [10], tags: [] };
-    const outOfScopeTestCaseA = { id: 2, query: 'query-2', expected_doc_ids: [], tags: [] };
-    const outOfScopeTestCaseB = { id: 3, query: 'query-3', expected_doc_ids: [], tags: [] };
+    const normalTestCase       = makeTestCase(1, [10]);
+    const outOfScopeTestCaseA  = makeTestCase(2, []);
+    const outOfScopeTestCaseB  = makeTestCase(3, []);
 
     testResults.push(scoreTestCase(normalTestCase,      [makeResult(10, 0.9)], 50));
     testResults.push(scoreTestCase(outOfScopeTestCaseA, [makeResult(99, 0.5)], 50));

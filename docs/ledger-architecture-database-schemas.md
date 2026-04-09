@@ -1,6 +1,6 @@
 # Ledger — Database Schemas
 
-> Ground-truth schema reference generated from live Supabase. 13 tables, organized by function. Updated: 2026-04-01.
+> Ground-truth schema reference generated from live Supabase. 14 tables, organized by function. Updated: 2026-04-08 (Phase 4.6.2 graded relevance).
 >
 > For generic RAG patterns, see `reference-rag-database-schemas.md`. This doc covers what Ledger actually has deployed.
 
@@ -26,6 +26,7 @@
     - [search_evaluations](#search_evaluations)
     - [search_evaluation_aggregates](#search_evaluation_aggregates)
     - [eval_golden_dataset](#eval_golden_dataset)
+    - [eval_golden_judgments](#eval_golden_judgments)
     - [eval_runs](#eval_runs)
 - [Relationships](#relationships)
 - [Extensions](#extensions)
@@ -455,15 +456,14 @@ CREATE TABLE search_evaluation_aggregates (
 
 #### eval_golden_dataset
 
-Known-correct query/expected-doc pairs for automated evaluation. 56 test cases across 6 categories.
+Curated test queries for automated evaluation. 144 test cases across 19 tags. Pairs with `eval_golden_judgments` for graded relevance — the dataset holds queries, the judgments table holds per-doc grades.
 
 | Column               | Type         | Nullable | Default        | Purpose                                              |
 |----------------------|--------------|----------|----------------|------------------------------------------------------|
 | `id`                 | bigserial    | NO       | auto           | Primary key                                          |
 | `query`              | text         | NO       |                | The test search query                                |
-| `expected_doc_ids`   | integer[]    | NO       |                | Document IDs that should appear in results           |
 | `expected_answer`    | text         | YES      |                | Expected answer text (for generation eval, unused)   |
-| `tags`               | text[]       | YES      | '{}'           | Categories: simple, conceptual, exact-term, multi-doc, cross-domain, out-of-scope |
+| `tags`               | text[]       | YES      | '{}'           | Categories                                           |
 | `created_at`         | timestamptz  | NO       | now()          | Creation timestamp                                   |
 | `updated_at`         | timestamptz  | NO       | now()          | Last update                                          |
 
@@ -471,13 +471,45 @@ Known-correct query/expected-doc pairs for automated evaluation. 56 test cases a
 CREATE TABLE eval_golden_dataset (
   id                 bigserial    PRIMARY KEY,
   query              text         NOT NULL,
-  expected_doc_ids   integer[]    NOT NULL,
   expected_answer    text,
   tags               text[]       DEFAULT '{}',
   created_at         timestamptz  NOT NULL DEFAULT now(),
   updated_at         timestamptz  NOT NULL DEFAULT now()
 );
 ```
+
+> **Phase 4.6.2 migration:** The legacy `expected_doc_ids integer[]` column was removed. Prior binary judgments were converted to grade-3 rows in `eval_golden_judgments` before the column was dropped.
+
+---
+
+#### eval_golden_judgments
+
+Graded relevance judgments — one row per (query, document) pair, using the TREC 4-level scale (0 not relevant, 1 related, 2 relevant, 3 highly relevant). Replaces the binary `expected_doc_ids` pattern. Enables NDCG with `gain = 2^grade - 1` and a `hit_threshold=2` rule across rate metrics.
+
+| Column         | Type         | Nullable | Default        | Purpose                                                              |
+|----------------|--------------|----------|----------------|----------------------------------------------------------------------|
+| `id`           | bigserial    | NO       | auto           | Primary key                                                          |
+| `golden_id`    | bigint       | NO       |                | FK → `eval_golden_dataset.id` ON DELETE CASCADE                      |
+| `document_id`  | bigint       | NO       |                | FK → `documents.id` ON DELETE CASCADE                                |
+| `grade`        | smallint     | NO       |                | TREC grade. `CHECK (grade BETWEEN 0 AND 3)`                          |
+| `judged_at`    | timestamptz  | NO       | now()          | Audit — when this judgment was recorded                              |
+| `judged_by`    | text         | NO       | 'adrian'       | Audit — who judged (forward-compat for multi-judge)                  |
+| `notes`        | text         | YES      |                | Free-form reasoning for tricky boundary calls                        |
+
+```sql
+CREATE TABLE eval_golden_judgments (
+  id            bigserial    PRIMARY KEY,
+  golden_id     bigint       NOT NULL REFERENCES eval_golden_dataset(id) ON DELETE CASCADE,
+  document_id   bigint       NOT NULL REFERENCES documents(id)           ON DELETE CASCADE,
+  grade         smallint     NOT NULL CHECK (grade BETWEEN 0 AND 3),
+  judged_at     timestamptz  NOT NULL DEFAULT now(),
+  judged_by     text         NOT NULL DEFAULT 'adrian',
+  notes         text,
+  UNIQUE (golden_id, document_id)
+);
+```
+
+Grading rubric and metric definitions: see `ledger-architecture-database-tables.md` → `eval_golden_judgments`.
 
 ---
 
@@ -582,7 +614,7 @@ CREATE TRIGGER set_updated_at
 
 ## Row-Level Security
 
-RLS enabled on all 14 tables. Current policy: service_role gets full access, anon gets nothing. Per-agent policies planned for Phase 6.
+RLS enabled on all 15 tables. Current policy: service_role gets full access, anon gets nothing. Per-agent policies planned for Phase 6.
 
 **Policy pattern** (same on every table except `eval_runs`):
 
@@ -609,11 +641,12 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 | `search_evaluations`           | Yes | Yes          | Yes          |                     |
 | `search_evaluation_aggregates` | Yes | Yes          | Yes          |                     |
 | `eval_golden_dataset`          | Yes | Yes          | Yes          |                     |
+| `eval_golden_judgments`        | Yes | Yes          | Yes          |                     |
 | `eval_runs`                    | Yes | Yes          | Yes          |                     |
 
 ---
 
-## Functions (17 custom)
+## Functions (21 custom)
 
 ### Document Operations (6)
 
@@ -635,7 +668,7 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 | `match_documents_hybrid`   | TABLE   | Hybrid — vector + keyword combined via RRF fusion         |
 | `retrieve_context`         | TABLE   | Smart retrieval — full doc if small, chunk + neighbors if large |
 
-### Evaluation & Maintenance (7)
+### Evaluation & Maintenance (10)
 
 | Function                          | Returns | Purpose                                             |
 |-----------------------------------|---------|-----------------------------------------------------|
@@ -646,10 +679,14 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 | `create_audit_partition_if_needed`| void    | Auto-create next year's audit_log partition           |
 | `document_purge`                  | integer | (listed above — also serves as maintenance)          |
 | `trg_documents_set_updated_at`    | trigger | Auto-set updated_at on document changes              |
+| `judgment_create`                 | bigint  | Insert a graded judgment for (golden_id, document_id). Errors on duplicate. |
+| `judgment_update`                 | void    | Update existing judgment's grade/notes, bumps `judged_at`. Errors if missing. |
+| `judgment_delete`                 | void    | Remove a judgment. Idempotent on missing row.        |
+| `count_golden_with_min_judgments` | bigint  | Count golden queries with >= N judgments. Progress display for eval:judge. |
 
 ---
 
-## Indexes (56 total)
+## Indexes (61 total)
 
 ### documents (12)
 
@@ -739,6 +776,13 @@ CREATE UNIQUE INDEX agents_api_key_hash_key           ON agents USING btree (api
 -- eval_golden_dataset (2)
 CREATE UNIQUE INDEX eval_golden_dataset_pkey           ON eval_golden_dataset USING btree (id);
 CREATE INDEX index_eval_golden_tags                    ON eval_golden_dataset USING gin (tags);
+
+-- eval_golden_judgments (5)
+CREATE UNIQUE INDEX eval_golden_judgments_pkey         ON eval_golden_judgments USING btree (id);
+CREATE UNIQUE INDEX eval_golden_judgments_unique       ON eval_golden_judgments USING btree (golden_id, document_id);
+CREATE INDEX idx_golden_judgments_golden_id            ON eval_golden_judgments USING btree (golden_id);
+CREATE INDEX idx_golden_judgments_document_id          ON eval_golden_judgments USING btree (document_id);
+CREATE INDEX idx_golden_judgments_grade                ON eval_golden_judgments USING btree (grade);
 
 -- eval_runs (1)
 CREATE UNIQUE INDEX eval_runs_pkey                     ON eval_runs USING btree (id);
@@ -1339,8 +1383,9 @@ $$;
 | `query_cache`                  | Yes           | Read/write in `embeddings.ts`                |
 | `audit_log` + partitions       | Yes           | Written by all RPC functions                 |
 | `search_evaluations`           | Yes           | Written by `logSearchEvaluation()` every search |
-| `eval_golden_dataset`          | Yes           | Read by `eval-search.ts`                     |
-| `eval_runs`                    | Yes           | Written by `saveEvalRun()`, read by `loadPreviousRun()` in eval-store.ts |
+| `eval_golden_dataset`          | Yes           | Read by eval runner (queries + tags)                                      |
+| `eval_golden_judgments`        | Yes           | Read by eval runner (grades), written by `ledger eval:judge` via RPC      |
+| `eval_runs`                    | Yes           | Written by `saveEvalRun()`, read by `loadPreviousRun()` in eval-store.ts  |
 | `search_evaluation_aggregates` | **No**        | Table + function exist — no cron wired (Phase 7) |
 | `agents`                       | **No**        | Table exists — enforcement in Phase 6        |
 | `ingestion_queue`              | **No**        | Table exists — processing code in Phase 4.6  |
