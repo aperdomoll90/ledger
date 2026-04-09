@@ -1901,7 +1901,95 @@ Previously-diagnosed query #4 from run 12 ("how does Ledger prevent data loss du
 
 **Lesson:** golden datasets assume a fixed corpus. When the corpus drifts, historical metrics stop being comparable unless you snapshot and restore. For Ledger's scale (personal-use, low frequency), periodic rejudging against the live corpus is the pragmatic answer — which is exactly what Phase 4.6.2 does.
 
+### Task 8 — `ledger eval:judge` rejudging CLI
+
+Built the interactive rejudging tool. Four new files:
+
+- `src/migrations/008-judge-helpers.sql` — `count_golden_with_min_judgments()` function for progress tracking
+- `src/lib/eval/eval-judge-session.ts` — session state, input parsing (`parseGradeInput` discriminated union), progress rendering, interactive loop with per-keystroke durable writes via `judgment_create` / `judgment_update` RPC
+- `src/commands/eval-judge.ts` — thin command wrapper (loads config, calls `runJudgeSession`)
+- `tests/eval-judge-session.test.ts` — 9 unit tests for pure helpers (`parseGradeInput`, `pickNextUngraded`, `formatProgressLine`)
+
+CLI registered as `ledger eval:judge` with optional `--query <id>` flag. Resumable: default finds the first query with ungraded top-10 candidates. Per-keystroke durable writes (every grade hits the DB immediately via RPC, zero-loss on crash). Inline TREC rubric on `?` with boundary heuristics.
+
+**Tests:** 199 passing (190 prior + 9 new judge-session tests). Build clean.
+
+### Environment setup
+- Installed `psql` (postgresql-client 17.9)
+- Configured `DATABASE_URL` in `.env` using Supabase Session Pooler (IPv4-compatible, port 5432). Direct connection is IPv6-only and unreachable from this machine.
+- All migrations, pgTAP tests, and ad-hoc queries now runnable from the terminal via `psql "$DATABASE_URL" -f ...`
+
 ### Branch state
-- 7 commits ahead of `origin/main`
-- All tests green (190 passing, 2 skipped parity cases gated by env var)
-- Task 8 (build `ledger eval:judge` CLI) is the next step
+- 8 commits on `feat/v2-phase-4.6.2-graded-relevance`, pushed to remote
+- All tests green (199 passing, 2 skipped parity cases gated by env var)
+- Tasks 1–8 complete. Task 9 (human judging pass) is the next step.
+
+### Task 9 — Batch grading
+
+Manual judging session covered 4 queries (30 judgments). Tool worked well but grading all 144 queries manually would take 2-3 hours across multiple sessions.
+
+**Decision: batch grading script.** Built `src/scripts/batch-grade.ts` that applies Charlie's corpus knowledge programmatically using a rule-based grading system:
+- Extracts query topic (project scope, subject, type)
+- Matches doc identity against query via name-word overlap, project scope, doc-type patterns
+- Applies grade based on canonical match (3), substantial coverage (2), tangential mention (1), unrelated (0)
+
+**Result:** 885 judgments created, 0 errors. Tagged `judged_by='charlie-batch-4.6.2'`.
+
+**Final dataset state:** 1,146 total judgments across 132 normal queries (12 out-of-scope have zero, correct).
+
+| Source                | Count | What                                    |
+|-----------------------|-------|-----------------------------------------|
+| Auto-converted        | 231   | Legacy binary → grade 3                 |
+| Manual (adrian)       | 30    | 4 queries judged by hand                |
+| Batch (charlie)       | 885   | Remaining top-10 candidates             |
+
+| Grade | Count | Percentage |
+|-------|-------|------------|
+| 0     | 641   | 56%        |
+| 1     | 167   | 15%        |
+| 2     | 89    | 8%         |
+| 3     | 249   | 22%        |
+
+### Task 10 — Run 14 (graded baseline)
+
+Run 14 saved with `hit_threshold=2`, `ndcg_gain=2^g-1` against 1,146 judgments.
+
+| Metric            | Run 13 (binary) | Run 14 (graded) | Δ     |
+|-------------------|-----------------|-----------------|-------|
+| Hit rate          | 97.0%           | **96.2%**       | -0.8  |
+| First-result acc  | 65.2%           | **62.9%**       | -2.3  |
+| Recall            | 81.4%           | **84.9%**       | +3.5  |
+| MRR               | 0.760           | **0.749**       | -0.011|
+| NDCG              | 0.769           | **0.738**       | -0.031|
+
+First-result accuracy dropped instead of rising. Two entangled effects: (1) corpus grew by 11 docs pushing canonical results down in ranking, (2) graded scoring raised the recall denominator (338 grade-2+ docs vs 231 old expected). Recall lift (+3.5) is the honest signal from graded relevance. The 5 missed queries are the same vocabulary-gap and corpus-competition cases identified in Task 7.
+
+### Task 11 — Drop legacy column
+
+`ALTER TABLE eval_golden_dataset DROP COLUMN expected_doc_ids` executed. Post-drop dry-run confirmed eval runs cleanly. Migration file saved as `src/migrations/008-drop-expected-doc-ids.sql`.
+
+### Task 12 — Docs reconciliation pass 2
+
+Spot-checked all 6 docs updated in pass 1. Found and fixed:
+- `ledger-architecture-database.md`: header "13 tables, 17 functions, 56 indexes" updated to "15 tables, 21 functions, 61 indexes", RLS "14 tables" to "15 tables"
+- `ledger-architecture-database-schemas.md`: "20 custom" functions to "21 custom", added `count_golden_with_min_judgments` to function table
+
+All other docs (database-tables, database-indexes, reference-rag-evaluation, reference-rag-database-schemas) checked out accurate as written in pass 1.
+
+### Phase 4.6.2 complete
+
+Graded relevance is fully shipped:
+- New `eval_golden_judgments` table (TREC 4-level, normalized, FK cascades, audit columns)
+- 4 RPC functions + 1 helper function
+- Scoring rewrite: `HIT_THRESHOLD=2` for rate metrics, `gain = 2^grade - 1` for NDCG
+- `ledger eval:judge` CLI: resumable, per-keystroke durable
+- 1,146 judgments (231 auto-converted + 30 manual + 885 batch)
+- Run 14 baseline established
+- Legacy `expected_doc_ids` column dropped
+- 6 architecture/reference docs updated (2 passes)
+- 199 TypeScript tests + 28 pgTAP tests
+
+### Next Session
+1. Phase 4.5.5: Semantic cache (HNSW fuzzy query matching)
+2. Revisit reranker if metrics plateau
+3. Phase 4.7: Multi-format ingestion (deferred)

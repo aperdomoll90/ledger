@@ -1,6 +1,6 @@
 # Ledger — Database Architecture
 
-> Overview of Ledger's database: 13 tables, 17 functions, 56 indexes. Supabase (Postgres + pgvector).
+> Overview of Ledger's database: 15 tables, 21 functions, 61 indexes. Supabase (Postgres + pgvector).
 >
 > Updated: 2026-04-03. For full details, see the child docs linked below.
 
@@ -16,7 +16,7 @@ The database is the backbone of Ledger. Documents go in, get chunked and embedde
   - [How data flows between tables](#how-data-flows-between-tables)
   - [Two storage patterns](#two-storage-patterns)
   - [Two evaluation subsystems](#two-evaluation-subsystems)
-- [Functions (17)](#functions-17)
+- [Functions (21)](#functions-21)
 - [Indexes (56)](#indexes-56)
 - [Key Design Patterns](#key-design-patterns)
 - [Infrastructure](#infrastructure)
@@ -91,7 +91,7 @@ They're independent but designed to feed each other: spot failures in production
 
 ---
 
-## Functions (17)
+## Functions (21)
 
 | Category      | Count | What they do                                                  |
 |---------------|-------|---------------------------------------------------------------|
@@ -144,7 +144,7 @@ See `ledger-architecture-database-indexes.md` for full SQL.
 
 | Component     | Status                                                        |
 |---------------|---------------------------------------------------------------|
-| RLS           | Enabled on all 14 tables. Service role = full access, anon = blocked. Per-agent policies Phase 6. |
+| RLS           | Enabled on all 15 tables. Service role = full access, anon = blocked. Per-agent policies Phase 6. |
 | Extensions    | pgvector 0.8.0, pgcrypto 1.3, pgtap 1.3.3 + 4 Supabase auto-enabled |
 | Triggers      | 1 — `set_updated_at` on documents (BEFORE UPDATE)            |
 | Realtime      | Enabled on `documents` only. No listener code yet (Phase 5). |

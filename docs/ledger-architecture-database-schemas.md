@@ -646,7 +646,7 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 
 ---
 
-## Functions (20 custom)
+## Functions (21 custom)
 
 ### Document Operations (6)
 
@@ -682,6 +682,7 @@ CREATE POLICY "Service role full access" ON <table> FOR ALL USING (true);
 | `judgment_create`                 | bigint  | Insert a graded judgment for (golden_id, document_id). Errors on duplicate. |
 | `judgment_update`                 | void    | Update existing judgment's grade/notes, bumps `judged_at`. Errors if missing. |
 | `judgment_delete`                 | void    | Remove a judgment. Idempotent on missing row.        |
+| `count_golden_with_min_judgments` | bigint  | Count golden queries with >= N judgments. Progress display for eval:judge. |
 
 ---
 
