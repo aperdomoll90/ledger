@@ -1989,7 +1989,26 @@ Graded relevance is fully shipped:
 - 6 architecture/reference docs updated (2 passes)
 - 199 TypeScript tests + 28 pgTAP tests
 
+### Post-4.6.2: Infrastructure gaps discovered
+
+**1. No rate-limit handling on OpenAI API calls.**
+`generateContextSummaries()` and `generateEmbedding()` fire calls with no retry, no backoff, no token budget tracking. Large docs (85K+) hit the gpt-4o-mini 200K TPM limit and crash. Needs a rate-aware API client layer (token budget tracking, pre-flight checks, exponential backoff with jitter). Industry standard for production RAG systems.
+
+**2. MCP tool can't handle large document updates.**
+The MCP transport layer has message size constraints. Documents over ~50K chars should go through `updateDocument()` in TypeScript directly, not through the MCP tool parameter. Built `sync-local-docs.ts` as a workaround. Need a permanent solution: either size check + warning in MCP tool, or make the CLI `push` command match by doc name.
+
+**3. Error handling audit needed.**
+No systematic review of all external API call sites (OpenAI, Supabase) for error handling. The rate-limit crash was discovered by accident during doc sync. Other silent failures may exist.
+
+**4. Ledger doc sync gap.**
+Local `docs/*.md` edits via the Edit tool don't trigger the post-write Ledger sync hook. Built `sync-local-docs.ts` script to push manually. 6 of 8 docs synced, 2 failed on rate limit (reference-rag-evaluation.md, reference-rag-system-architecture.md). Still pending.
+
+**5. Errorlog audit.**
+Reviewed full devlog history. Added 6 missing error/solution pairs to `ledger-errorlog` (#19): HNSW subquery limitation (S28), Vitest heap OOM (S30), DISTINCT ON ordering bug (S34), IPv6 direct connection (S36), rate limit crash (S36), MCP large content (S36).
+
 ### Next Session
-1. Phase 4.5.5: Semantic cache (HNSW fuzzy query matching)
-2. Revisit reranker if metrics plateau
-3. Phase 4.7: Multi-format ingestion (deferred)
+1. **Rate-aware API client layer** — brainstorm + plan + implement. Fixes rate limit crashes for large doc ingestion.
+2. **Error handling audit** — systematic review of all OpenAI/Supabase call sites
+3. **Retry the 2 failed doc syncs** (reference-rag-evaluation.md, reference-rag-system-architecture.md) after rate limiter is built
+4. Phase 4.5.5: Semantic cache (HNSW fuzzy query matching)
+5. Revisit reranker if metrics plateau
