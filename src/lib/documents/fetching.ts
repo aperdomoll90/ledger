@@ -19,8 +19,13 @@ export async function getDocumentById(
     .is('deleted_at', null)
     .single();
 
-  if (error || !data) return null;
-  return data as IDocumentProps;
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      process.stderr.write(`[ledger] getDocumentById(${id}) failed: ${error.message}\n`);
+    }
+    return null;
+  }
+  return (data as IDocumentProps) ?? null;
 }
 
 /**
@@ -38,8 +43,13 @@ export async function getDocumentByName(
     .is('deleted_at', null)
     .single();
 
-  if (error || !data) return null;
-  return data as IDocumentProps;
+  if (error) {
+    if (error.code !== 'PGRST116') {
+      process.stderr.write(`[ledger] getDocumentByName("${name}") failed: ${error.message}\n`);
+    }
+    return null;
+  }
+  return (data as IDocumentProps) ?? null;
 }
 
 /**
@@ -65,8 +75,11 @@ export async function listDocuments(
   if (filters.project) query = query.eq('project', filters.project);
 
   const { data, error } = await query;
-  if (error || !data) return [];
-  return data as IDocumentProps[];
+  if (error) {
+    process.stderr.write(`[ledger] listDocuments failed: ${error.message}\n`);
+    return [];
+  }
+  return (data as IDocumentProps[]) ?? [];
 }
 
 /**
@@ -87,6 +100,9 @@ export async function fetchSyncableDocuments(
     .eq('is_auto_load', true)
     .is('deleted_at', null);
 
-  if (error || !data) return [];
-  return data as IDocumentProps[];
+  if (error) {
+    process.stderr.write(`[ledger] fetchSyncableDocuments failed: ${error.message}\n`);
+    return [];
+  }
+  return (data as IDocumentProps[]) ?? [];
 }

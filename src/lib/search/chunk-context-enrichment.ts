@@ -93,24 +93,31 @@ export async function generateContextSummaries(
       .replace('{DOCUMENT_CONTENT}', documentContent)
       .replace('{CHUNK_CONTENT}', chunk.content);
 
-    const response = await openaiLimiter.schedule(() =>
-      openai.chat.completions.create({
-        model: CONTEXT_ENRICHMENT_MODEL,
-        messages: [
-          { role: 'system', content: 'You are a precise technical writer. Output only the context summary, nothing else.' },
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: 150,
-        temperature: 0,
-      }),
-    );
+    try {
+      const response = await openaiLimiter.schedule(() =>
+        openai.chat.completions.create({
+          model: CONTEXT_ENRICHMENT_MODEL,
+          messages: [
+            { role: 'system', content: 'You are a precise technical writer. Output only the context summary, nothing else.' },
+            { role: 'user', content: prompt },
+          ],
+          max_tokens: 150,
+          temperature: 0,
+        }),
+      );
 
-    const summary = (response.choices[0].message.content ?? '').trim();
+      const summary = (response.choices[0].message.content ?? '').trim();
 
-    results.push({
-      summary,
-      tokenCount: estimateTokenCount(chunk.content),
-    });
+      results.push({
+        summary,
+        tokenCount: estimateTokenCount(chunk.content),
+      });
+    } catch (error) {
+      const preview = chunk.content.slice(0, 60).replace(/\n/g, ' ');
+      throw new Error(
+        `Context summary failed for chunk ${chunk.chunk_index} ("${preview}..."): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   return results;

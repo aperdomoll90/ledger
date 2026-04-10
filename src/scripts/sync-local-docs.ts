@@ -74,7 +74,12 @@ async function main(): Promise<void> {
       .eq('name', docName)
       .single();
 
-    if (lookupError || !doc) {
+    if (lookupError) {
+      console.error(`  [ERR] ${filePath} — lookup failed for "${docName}": ${lookupError.message}`);
+      errors++;
+      continue;
+    }
+    if (!doc) {
       console.error(`  [SKIP] ${filePath} — no Ledger document named "${docName}"`);
       skipped++;
       continue;

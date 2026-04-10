@@ -78,7 +78,7 @@ export async function createDocument(
     p_chunk_overlap: config.overlapChars,
   });
 
-  if (error) throw new Error(`Failed to create document: ${error.message}`);
+  if (error) throw new Error(`Failed to create document "${props.name}" (${props.domain}/${props.document_type}): ${error.message}`);
   return data as number;
 }
 
@@ -126,7 +126,7 @@ export async function updateDocument(
     p_chunk_overlap: config.overlapChars,
   });
 
-  if (error) throw new Error(`Failed to update document: ${error.message}`);
+  if (error) throw new Error(`Failed to update document #${props.id}: ${error.message}`);
 }
 
 /**
@@ -160,7 +160,7 @@ export async function updateDocumentFields(
     p_embedding_model_id: props.embedding_model_id ?? null,
   });
 
-  if (error) throw new Error(`Failed to update document fields: ${error.message}`);
+  if (error) throw new Error(`Failed to update fields on document #${props.id}: ${error.message}`);
 }
 
 /**
@@ -179,7 +179,7 @@ export async function deleteDocument(
     p_agent: agent,
   });
 
-  if (error) throw new Error(`Failed to delete document: ${error.message}`);
+  if (error) throw new Error(`Failed to delete document #${id}: ${error.message}`);
 }
 
 /**
@@ -197,5 +197,5 @@ export async function restoreDocument(
     p_agent: agent,
   });
 
-  if (error) throw new Error(`Failed to restore document: ${error.message}`);
+  if (error) throw new Error(`Failed to restore document #${id}: ${error.message}`);
 }

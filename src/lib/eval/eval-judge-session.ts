@@ -107,7 +107,11 @@ async function loadNextGolden(
     .gte('id', startId)
     .order('id', { ascending: true });
 
-  if (error || !data) return null;
+  if (error) {
+    process.stderr.write(`[ledger] loadNextGolden failed: ${error.message}\n`);
+    return null;
+  }
+  if (!data) return null;
 
   for (const row of data as Array<{ id: number; query: string; tags: string[] | null; judgments: IJudgmentRowProps[] | null }>) {
     const gradedMap = new Map<number, number>();

@@ -127,8 +127,8 @@ function logSearchEvaluation(
       response_time_ms: params.responseTimeMs,
     })
     .then(() => {})
-    .catch(() => {
-      // Silently ignore logging failures — search results matter more
+    .catch((logError: { message?: string }) => {
+      process.stderr.write(`[ledger] search evaluation logging failed: ${logError.message ?? 'unknown error'}\n`);
     });
 }
 
@@ -162,7 +162,7 @@ export async function searchByVector(
     p_project: props.project ?? null,
   });
 
-  if (error) throw new Error(`Vector search failed: ${error.message}`);
+  if (error) throw new Error(`Vector search failed for "${props.query}": ${error.message}`);
   const results = (data ?? []) as ISearchResultProps[];
 
   logSearchEvaluation(clients.supabase, {
@@ -194,7 +194,7 @@ export async function searchByKeyword(
     p_project: props.project ?? null,
   });
 
-  if (error) throw new Error(`Keyword search failed: ${error.message}`);
+  if (error) throw new Error(`Keyword search failed for "${props.query}": ${error.message}`);
   const results = (data ?? []) as ISearchResultProps[];
 
   logSearchEvaluation(supabase, {
@@ -242,7 +242,7 @@ export async function searchHybrid(
     p_rrf_k: props.reciprocalRankFusionK ?? 60,
   });
 
-  if (error) throw new Error(`Hybrid search failed: ${error.message}`);
+  if (error) throw new Error(`Hybrid search failed for "${props.query}": ${error.message}`);
   let results = (data ?? []) as ISearchResultProps[];
 
   // Rerank: send candidates to Cohere cross-encoder for re-scoring.
@@ -286,7 +286,7 @@ export async function retrieveContext(
     p_neighbor_count: props.neighbor_count ?? 1,
   });
 
-  if (error) throw new Error(`Context retrieval failed: ${error.message}`);
+  if (error) throw new Error(`Context retrieval failed for document #${props.document_id}, chunk ${props.matched_chunk_index}: ${error.message}`);
   if (!data || (Array.isArray(data) && data.length === 0)) return null;
   return (Array.isArray(data) ? data[0] : data) as IContextResultProps;
 }

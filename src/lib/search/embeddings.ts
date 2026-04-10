@@ -247,15 +247,22 @@ function forceCharSplit(
  * Similar texts produce similar numbers — that's how search works.
  */
 export async function generateEmbedding(openai: IOpenAIClientProps, text: string): Promise<number[]> {
-  return openaiLimiter.schedule(async () => {
-    const { data, response } = await openai.embeddings.create({
-      model: EMBEDDING_MODEL,
-      input: text,
-    }).withResponse();
+  try {
+    return await openaiLimiter.schedule(async () => {
+      const { data, response } = await openai.embeddings.create({
+        model: EMBEDDING_MODEL,
+        input: text,
+      }).withResponse();
 
-    await updateLimitsFromHeaders(openaiLimiter, response.headers);
-    return data.data[0].embedding;
-  });
+      await updateLimitsFromHeaders(openaiLimiter, response.headers);
+      return data.data[0].embedding;
+    });
+  } catch (error) {
+    const preview = text.slice(0, 80).replace(/\n/g, ' ');
+    throw new Error(
+      `Embedding generation failed for text "${preview}...": ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /**
@@ -277,15 +284,20 @@ export async function getOrCacheQueryEmbedding(
   const normalizedQuery = query.toLowerCase().trim();
 
   // Check cache
-  const { data: cached } = await clients.supabase
+  const { data: cached, error: cacheError } = await clients.supabase
     .from('query_cache')
     .select('embedding, hit_count')
     .eq('query_text', normalizedQuery)
     .single();
 
+  if (cacheError && cacheError.code !== 'PGRST116') {
+    // PGRST116 = "not found" (expected for cache miss). Any other error is real.
+    process.stderr.write(`[ledger] query cache lookup failed: ${cacheError.message}\n`);
+  }
+
   if (cached?.embedding) {
-    // Update cache stats
-    await clients.supabase
+    // Update cache stats (non-blocking, non-fatal)
+    const { error: updateError } = await clients.supabase
       .from('query_cache')
       .update({
         hit_count: (cached.hit_count as number) + 1,
@@ -293,20 +305,30 @@ export async function getOrCacheQueryEmbedding(
       })
       .eq('query_text', normalizedQuery);
 
+    if (updateError) {
+      process.stderr.write(`[ledger] query cache hit_count update failed: ${updateError.message}\n`);
+    }
+
     return parseVector(cached.embedding);
   }
 
-  // Generate and cache — send original query to OpenAI (preserves meaning),
+  // Generate and cache. Send original query to OpenAI (preserves meaning),
   // but store under normalized key (so "Auth" and "auth" share one cache entry)
   const embedding = await generateEmbedding(clients.openai, query);
 
-  await clients.supabase
+  // Cache insert is non-blocking, non-fatal. A failed insert means the next
+  // identical query will hit OpenAI again, but search still works.
+  const { error: insertError } = await clients.supabase
     .from('query_cache')
     .insert({
       query_text: normalizedQuery,
       embedding: toVectorString(embedding),
       embedding_model_id: 'openai/text-embedding-3-small',
     });
+
+  if (insertError) {
+    process.stderr.write(`[ledger] query cache insert failed for "${normalizedQuery}": ${insertError.message}\n`);
+  }
 
   return embedding;
 }
