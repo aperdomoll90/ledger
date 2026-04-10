@@ -2060,8 +2060,21 @@ Built proactive rate limiting for all external API calls. This was the #1 infras
 - All tests green (212 passing, 2 skipped)
 - Build clean
 
+### Error Handling Audit
+
+Systematic review and fix of all 30 external API call sites across 10 files.
+
+**Fixes by category:**
+- **Critical (3):** Added try/catch with input context on generateEmbedding(), generateContextSummaries(), and cache operations
+- **Silent failures (7):** Added stderr logging to fetching.ts (4 functions), eval-store.ts (2 load functions), eval-judge-session.ts. PGRST116 ("not found") filtered to avoid noise.
+- **Partial errors (13):** Enriched all RPC error messages in operations.ts (5) and ai-search.ts (4) with document IDs, names, and query text
+- **Other:** JSON parse guard on Cohere reranker, stderr on fire-and-forget search eval logging, separated lookup errors from missing docs in sync script
+
+**Test mocks updated:** document-fetching.test.ts mocks now include `code: 'PGRST116'` to match real Supabase error shape.
+
+**Result:** 212 tests passing, build clean. Merged to main.
+
 ### Next
 1. Sync architecture update to Ledger (#137) via sync-local-docs.ts
-2. Error handling audit across all OpenAI/Supabase call sites
-3. Phase 4.5.5: Semantic cache
-4. Revisit reranker if first-result accuracy plateaus
+2. Phase 4.5.5: Semantic cache
+3. Revisit reranker if first-result accuracy plateaus

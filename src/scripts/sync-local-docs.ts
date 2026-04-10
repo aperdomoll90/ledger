@@ -35,6 +35,7 @@ const singleFile = fileArgIdx >= 0 ? process.argv[fileArgIdx + 1] : null;
 // Map of local file paths to Ledger document names.
 // Add entries here as docs are created.
 const FILE_TO_DOC: Record<string, string> = {
+  'docs/ledger-architecture.md':                  'ledger-architecture',
   'docs/ledger-architecture-database.md':         'ledger-architecture-database',
   'docs/ledger-architecture-database-tables.md':  'ledger-architecture-database-tables',
   'docs/ledger-architecture-database-schemas.md': 'ledger-architecture-database-schemas',
