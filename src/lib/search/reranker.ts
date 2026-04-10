@@ -98,7 +98,17 @@ export async function rerankResults(
     return searchResults;
   }
 
-  const cohereResponse = (await response.json()) as ICohereRerankResponse;
+  let cohereResponse: ICohereRerankResponse;
+  try {
+    cohereResponse = (await response.json()) as ICohereRerankResponse;
+  } catch (_parseError) {
+    // Malformed JSON from Cohere — return originals unchanged
+    return searchResults;
+  }
+
+  if (!cohereResponse.results || !Array.isArray(cohereResponse.results)) {
+    return searchResults;
+  }
 
   // Map Cohere results back to our search results, re-sorted by relevance.
   // Cohere returns results sorted by relevance_score (highest first).

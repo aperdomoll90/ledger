@@ -51,7 +51,7 @@ describe('getDocumentById', () => {
   });
 
   it('returns null when not found', async () => {
-    const supabase = createMockSupabase({ data: null, error: { message: 'not found' } });
+    const supabase = createMockSupabase({ data: null, error: { message: 'not found', code: 'PGRST116' } });
     const result = await getDocumentById(supabase, 999);
     expect(result).toBeNull();
   });
@@ -72,7 +72,7 @@ describe('getDocumentByName', () => {
   });
 
   it('returns null when not found', async () => {
-    const supabase = createMockSupabase({ data: null, error: { message: 'not found' } });
+    const supabase = createMockSupabase({ data: null, error: { message: 'not found', code: 'PGRST116' } });
     const result = await getDocumentByName(supabase, 'nonexistent');
     expect(result).toBeNull();
   });

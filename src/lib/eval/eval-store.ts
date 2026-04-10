@@ -120,7 +120,7 @@ export async function saveEvalRun(
     .single();
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(`Failed to save eval run (${props.metrics.totalCases} cases): ${error.message}`);
   }
 
   return (data as { id: number }).id;
@@ -141,6 +141,9 @@ export async function loadPreviousRun(
     .single();
 
   if (error) {
+    if (error.code !== 'PGRST116') {
+      process.stderr.write(`[ledger] loadPreviousRun failed: ${error.message}\n`);
+    }
     return null;
   }
 
@@ -158,6 +161,9 @@ export async function loadEvalRun(
     .single();
 
   if (error) {
+    if (error.code !== 'PGRST116') {
+      process.stderr.write(`[ledger] loadEvalRun(${runId}) failed: ${error.message}\n`);
+    }
     return null;
   }
 
