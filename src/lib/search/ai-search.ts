@@ -6,6 +6,12 @@
 import type { Domain, Protection, DocumentStatus, ISupabaseClientProps, IClientsProps } from '../documents/classification.js';
 import { getOrCacheQueryEmbedding, toVectorString } from './embeddings.js';
 import { rerankResults } from './reranker.js';
+import {
+  buildSearchParams,
+  extractSourceDocIds,
+  SEMANTIC_CACHE_MODEL_ID,
+  SEMANTIC_CACHE_THRESHOLD,
+} from './semantic-cache.js';
 
 // =============================================================================
 // Search result interfaces
@@ -152,9 +158,41 @@ export async function searchByVector(
 ): Promise<ISearchResultProps[]> {
   const startTime = Date.now();
   const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
+  const embeddingString = toVectorString(queryEmbedding);
 
+  // Semantic cache lookup (layer 2)
+  const searchParams = buildSearchParams({
+    threshold: props.threshold ?? 0.38,
+    limit: props.limit ?? 10,
+    domain: props.domain,
+    document_type: props.document_type,
+    project: props.project,
+  });
+
+  const { data: cachedResults } = await clients.supabase.rpc('semantic_cache_lookup', {
+    p_query_embedding: embeddingString,
+    p_search_mode: 'vector',
+    p_search_params: searchParams,
+    p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
+    p_similarity_threshold: SEMANTIC_CACHE_THRESHOLD,
+  });
+
+  if (cachedResults) {
+    const results = cachedResults as ISearchResultProps[];
+    if (results.length > 0) {
+      logSearchEvaluation(clients.supabase, {
+        query: props.query,
+        searchMode: 'vector',
+        results,
+        responseTimeMs: Date.now() - startTime,
+      });
+      return results;
+    }
+  }
+
+  // Cache miss: run full search pipeline
   const { data, error } = await clients.supabase.rpc('match_documents', {
-    q_emb: toVectorString(queryEmbedding),
+    q_emb: embeddingString,
     p_threshold: props.threshold ?? 0.38,
     p_max_results: props.limit ?? 10,
     p_domain: props.domain ?? null,
@@ -164,6 +202,22 @@ export async function searchByVector(
 
   if (error) throw new Error(`Vector search failed for "${props.query}": ${error.message}`);
   const results = (data ?? []) as ISearchResultProps[];
+
+  // Store in semantic cache (non-blocking)
+  if (results.length > 0) {
+    const sourceDocIds = extractSourceDocIds(results);
+    Promise.resolve(clients.supabase.rpc('semantic_cache_store', {
+      p_query_text: props.query,
+      p_query_embedding: embeddingString,
+      p_search_mode: 'vector',
+      p_search_params: searchParams,
+      p_cached_results: results,
+      p_source_doc_ids: sourceDocIds,
+      p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
+    })).then(() => {}).catch((err: { message?: string }) => {
+      process.stderr.write(`[ledger] semantic cache store failed: ${err.message ?? 'unknown'}\n`);
+    });
+  }
 
   logSearchEvaluation(clients.supabase, {
     query: props.query,
