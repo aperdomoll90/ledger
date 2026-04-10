@@ -278,6 +278,7 @@ export async function searchHybrid(
 ): Promise<ISearchResultProps[]> {
   const startTime = Date.now();
   const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
+  const embeddingString = toVectorString(queryEmbedding);
 
   // When reranking, fetch more candidates so the reranker has a bigger pool.
   // The reranker will select the best N from this larger set.
@@ -285,8 +286,42 @@ export async function searchHybrid(
   const desiredLimit = props.limit ?? 10;
   const requestLimit = useReranker ? desiredLimit * 2 : desiredLimit;
 
+  // Semantic cache lookup (layer 2)
+  // Skip cache when reranker is enabled (reranker produces different ordering)
+  const searchParams = buildSearchParams({
+    threshold: props.threshold ?? 0.38,
+    limit: requestLimit,
+    domain: props.domain,
+    document_type: props.document_type,
+    project: props.project,
+  });
+
+  if (!useReranker) {
+    const { data: cachedResults } = await clients.supabase.rpc('semantic_cache_lookup', {
+      p_query_embedding: embeddingString,
+      p_search_mode: 'hybrid',
+      p_search_params: searchParams,
+      p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
+      p_similarity_threshold: SEMANTIC_CACHE_THRESHOLD,
+    });
+
+    if (cachedResults) {
+      const results = cachedResults as ISearchResultProps[];
+      if (results.length > 0) {
+        logSearchEvaluation(clients.supabase, {
+          query: props.query,
+          searchMode: 'hybrid',
+          results,
+          responseTimeMs: Date.now() - startTime,
+        });
+        return results;
+      }
+    }
+  }
+
+  // Cache miss: run full search pipeline
   const { data, error } = await clients.supabase.rpc('match_documents_hybrid', {
-    q_emb: toVectorString(queryEmbedding),
+    q_emb: embeddingString,
     q_text: props.query,
     p_threshold: props.threshold ?? 0.38,
     p_max_results: requestLimit,
@@ -305,6 +340,22 @@ export async function searchHybrid(
     results = await rerankResults(props.query, results, {
       apiKey: clients.cohereApiKey!,
       topN: desiredLimit,
+    });
+  }
+
+  // Store in semantic cache (non-blocking, skip if reranker was used)
+  if (results.length > 0 && !useReranker) {
+    const sourceDocIds = extractSourceDocIds(results);
+    Promise.resolve(clients.supabase.rpc('semantic_cache_store', {
+      p_query_text: props.query,
+      p_query_embedding: embeddingString,
+      p_search_mode: 'hybrid',
+      p_search_params: searchParams,
+      p_cached_results: results,
+      p_source_doc_ids: sourceDocIds,
+      p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
+    })).then(() => {}).catch((err: { message?: string }) => {
+      process.stderr.write(`[ledger] semantic cache store failed: ${err.message ?? 'unknown'}\n`);
     });
   }
 
