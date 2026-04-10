@@ -1,6 +1,6 @@
 # Ledger — Architecture Overview
 
-> Last updated: 2026-04-09 (Session 37)
+> Last updated: 2026-04-10 (Session 37 continued)
 
 ## Table of Contents
 
@@ -97,7 +97,29 @@ Additional modules:
 
 **Error handling (S37):** All 30 external API call sites audited. OpenAI calls wrapped with try/catch and input context. Cache operations log to stderr on failure (non-fatal). RPC errors include document IDs and query text. Fetching functions log to stderr instead of returning silent null/[].
 
+Additional modules:
+- `semantic-cache.ts` — Helpers for layer 2 semantic cache (parameter normalization, result parsing)
+
 See: `ledger-architecture-typescript` (#140)
+
+## Semantic Cache
+
+Layer 2 cache: stores full search results keyed by query embedding similarity. When a query is semantically similar to a previously cached query (cosine similarity > 0.90), returns the cached results directly with zero additional database calls. Added in Session 37.
+
+**How it works:**
+1. After embedding the query (layer 1, query_cache), check `semantic_cache` table via HNSW nearest neighbor search
+2. If a cached entry matches (same search mode, same parameters, similarity > 0.90, not expired), return its `cached_results` JSONB directly
+3. If no match, run the full search pipeline, then store the results in the cache for future queries
+
+**Cache invalidation (two mechanisms):**
+- **Reverse index:** When a document is updated or deleted, `document_update` and `document_delete` RPCs delete all cache entries whose `source_doc_ids` array contains that document ID. Uses GIN index for fast lookup.
+- **TTL:** Every entry expires after 7 days. `semantic_cache_cleanup()` purges expired entries.
+
+**Applies to:** `searchByVector` and `searchHybrid`. Does not apply to `searchByKeyword` (no embedding to compare). Skipped when the reranker is enabled (different result ordering).
+
+**Table:** `semantic_cache` (10 columns, HNSW + GIN + BTREE indexes)
+**RPC functions:** `semantic_cache_lookup`, `semantic_cache_store`, `semantic_cache_cleanup`
+**Spec:** `docs/superpowers/specs/2026-04-10-semantic-cache-design.md`
 
 ## Rate Limiter
 
@@ -161,10 +183,13 @@ Three modes, all backed by Postgres functions:
 
 ## RAG Pipeline (Current)
 
-1. Query → [Rate Limiter] → OpenAI embedding (cached via `query_cache` or fresh)
-2. Hybrid search: HNSW vector (threshold 0.38) + GIN keyword → RRF fusion (k=60)
-3. Optional Cohere reranking ([Rate Limiter] → built, disabled for privacy)
-4. Smart retrieval: full doc or chunk + neighbors
+1. Query → [Rate Limiter] → OpenAI embedding (layer 1: `query_cache` handles this)
+2. [Semantic Cache] → Check for similar cached query (layer 2, cosine > 0.90)
+3. If cache HIT: return cached results (skip steps 4-5)
+4. Hybrid search: HNSW vector (threshold 0.38) + GIN keyword → RRF fusion (k=60)
+5. Optional Cohere reranking ([Rate Limiter] → built, disabled for privacy)
+6. Store results in semantic cache (non-blocking)
+7. Smart retrieval: full doc or chunk + neighbors
 
 **Ingestion pipeline:**
 1. Hash content (SHA-256 change detection)
@@ -209,7 +234,8 @@ src/
 │   │   ├── ai-search.ts           → Vector, keyword, hybrid search
 │   │   ├── embeddings.ts          → Chunking, embeddings, cache
 │   │   ├── chunk-context-enrichment.ts → Contextual Retrieval summaries
-│   │   └── reranker.ts            → Cohere cross-encoder reranking
+│   │   ├── reranker.ts            → Cohere cross-encoder reranking
+│   │   └── semantic-cache.ts      → Layer 2 cache helpers
 │   ├── eval/
 │   │   ├── eval.ts                → Scoring, metrics, comparison
 │   │   ├── eval-store.ts          → Persistence (save/load runs)
@@ -223,7 +249,7 @@ src/
 │   ├── batch-grade.ts             → Batch grading script
 │   ├── sync-local-docs.ts         → Bulk doc sync (bypasses MCP)
 │   └── convert-judgments-to-graded.ts → One-time migration
-└── migrations/                    → 000-008 SQL migrations
+└── migrations/                    → 000-009 SQL migrations
 
-tests/                             → 212 tests (15 files)
+tests/                             → 220 tests (16 files)
 ```
