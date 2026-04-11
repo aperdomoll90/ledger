@@ -21,13 +21,13 @@ function makeMockSupabase() {
 // 2. Has .withResponse() (for the rate-limiter-aware path that reads headers)
 // This mimics the real OpenAI SDK's APIPromise behavior.
 function makeMockOpenAI() {
-  const embeddingData = { data: [{ embedding: new Array(1536).fill(0.01) }] };
-
-  function makeEmbeddingResponse() {
-    const promise = Promise.resolve(embeddingData);
+  function makeEmbeddingResponse(params: { input: string | string[] }) {
+    const inputs = Array.isArray(params.input) ? params.input : [params.input];
+    const responseData = { data: inputs.map(() => ({ embedding: new Array(1536).fill(0.01) })) };
+    const promise = Promise.resolve(responseData);
     return Object.assign(promise, {
       withResponse: () => Promise.resolve({
-        data: embeddingData,
+        data: responseData,
         response: { headers: new Headers() },
       }),
     });
@@ -35,7 +35,7 @@ function makeMockOpenAI() {
 
   return {
     embeddings: {
-      create: vi.fn().mockImplementation(() => makeEmbeddingResponse()),
+      create: vi.fn().mockImplementation((params: { input: string | string[] }) => makeEmbeddingResponse(params)),
     },
     chat: {
       completions: {
@@ -127,10 +127,11 @@ describe('createDocument — enriched pipeline', () => {
       content: 'Chunk content here.',
     });
 
-    // The embedding input should be summary + "\n\n" + chunk content
+    // Batch embedding: input is an array of strings, each is summary + "\n\n" + chunk
     const embeddingCall = openai.embeddings.create.mock.calls[0][0];
-    expect(embeddingCall.input).toContain('This chunk is about testing.');
-    expect(embeddingCall.input).toContain('Chunk content here.');
+    const batchInput = embeddingCall.input as string[];
+    expect(batchInput[0]).toContain('This chunk is about testing.');
+    expect(batchInput[0]).toContain('Chunk content here.');
   });
 
   it('stores original chunk content (not enriched) in p_chunk_contents', async () => {

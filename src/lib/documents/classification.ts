@@ -146,7 +146,7 @@ export interface ISupabaseClientProps {
 // Supabase RPC calls.
 export interface IOpenAIClientProps {
   embeddings: {
-    create: (params: { model: string; input: string }) => Promise<{ data: Array<{ embedding: number[] }> }> & {
+    create: (params: { model: string; input: string | string[] }) => Promise<{ data: Array<{ embedding: number[] }> }> & {
       withResponse: () => Promise<{
         data: { data: Array<{ embedding: number[] }> };
         response: { headers: Headers };

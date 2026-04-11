@@ -266,6 +266,46 @@ export async function generateEmbedding(openai: IOpenAIClientProps, text: string
 }
 
 /**
+ * Batch-generate embeddings for multiple texts in a single API call.
+ * OpenAI accepts an array of inputs and returns all embeddings at once.
+ * For 151 chunks, this is 2 API calls (batches of 100) instead of 151.
+ */
+export async function generateEmbeddingsBatch(
+  openai: IOpenAIClientProps,
+  texts: string[],
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+
+  const BATCH_SIZE = 100;
+  const allEmbeddings: number[][] = [];
+
+  for (let batchStart = 0; batchStart < texts.length; batchStart += BATCH_SIZE) {
+    const batch = texts.slice(batchStart, batchStart + BATCH_SIZE);
+
+    try {
+      const embeddings = await openaiLimiter.schedule(async () => {
+        const { data, response } = await openai.embeddings.create({
+          model: EMBEDDING_MODEL,
+          input: batch,
+        }).withResponse();
+
+        await updateLimitsFromHeaders(openaiLimiter, response.headers);
+        return data.data.map(entry => entry.embedding);
+      });
+
+      allEmbeddings.push(...embeddings);
+    } catch (error) {
+      const batchNumber = Math.floor(batchStart / BATCH_SIZE) + 1;
+      throw new Error(
+        `Batch embedding failed (batch ${batchNumber}, ${batch.length} texts): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return allEmbeddings;
+}
+
+/**
  * Get an embedding for a search query, using the cache to avoid repeat API calls.
  *
  * Flow:
