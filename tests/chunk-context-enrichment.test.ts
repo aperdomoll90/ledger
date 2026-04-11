@@ -70,7 +70,8 @@ describe('generateContextSummaries', () => {
     ];
     const mockOpenAI = makeMockOpenAI();
     await generateContextSummaries(mockOpenAI, chunks, 'Full doc content.');
-    expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(3);
+    // 1 summary call + 3 chunk enrichment calls = 4 total
+    expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(4);
   });
 
   it('uses gpt-4o-mini model', async () => {
@@ -81,17 +82,22 @@ describe('generateContextSummaries', () => {
     expect(callArgs.model).toBe('gpt-4o-mini');
   });
 
-  it('sends full document and chunk in messages', async () => {
+  it('first call is document summary, chunk calls use truncated context', async () => {
     const documentContent = 'This is the full document about RAG systems.';
     const chunkContent = 'This chunk covers embeddings.';
     const chunks = [makeChunk(chunkContent, 0)];
     const mockOpenAI = makeMockOpenAI();
     await generateContextSummaries(mockOpenAI, chunks, documentContent);
 
-    const callArgs = mockOpenAI.chat.completions.create.mock.calls[0][0];
-    const userMessage = callArgs.messages.find((message: { role: string }) => message.role === 'user');
-    expect(userMessage.content).toContain(documentContent);
-    expect(userMessage.content).toContain(chunkContent);
+    // Call 0: document summary (sends full document)
+    const summaryCall = mockOpenAI.chat.completions.create.mock.calls[0][0];
+    const summaryUser = summaryCall.messages.find((message: { role: string }) => message.role === 'user');
+    expect(summaryUser.content).toContain(documentContent);
+
+    // Call 1: chunk enrichment (sends summary + chunk, not full document)
+    const chunkCall = mockOpenAI.chat.completions.create.mock.calls[1][0];
+    const chunkUser = chunkCall.messages.find((message: { role: string }) => message.role === 'user');
+    expect(chunkUser.content).toContain(chunkContent);
   });
 
   it('returns empty array for empty chunks array', async () => {

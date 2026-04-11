@@ -4,7 +4,7 @@
 // The database handles transactions (document + chunks + audit = atomic).
 
 import type { IClientsProps, ICreateDocumentProps, IUpdateDocumentProps, IUpdateFieldsProps, IChunkConfigProps } from './classification.js';
-import { contentHash, chunkText, generateEmbedding, toVectorString } from '../search/embeddings.js';
+import { contentHash, chunkText, generateEmbeddingsBatch, toVectorString } from '../search/embeddings.js';
 import { generateContextSummaries } from '../search/chunk-context-enrichment.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
@@ -42,13 +42,10 @@ export async function createDocument(
   const chunkSummaries = enrichmentResults.map(result => result.summary);
   const chunkTokenCounts = enrichmentResults.map(result => result.tokenCount);
 
-  // Embed — summary + "\n\n" + chunk content
-  const chunkEmbeddings: string[] = [];
-  for (let index = 0; index < chunks.length; index++) {
-    const embeddingInput = chunkSummaries[index] + '\n\n' + chunks[index].content;
-    const embedding = await generateEmbedding(clients.openai, embeddingInput);
-    chunkEmbeddings.push(toVectorString(embedding));
-  }
+  // Embed — summary + "\n\n" + chunk content (batch: one API call per 100 chunks)
+  const embeddingInputs = chunks.map((chunk, index) => chunkSummaries[index] + '\n\n' + chunk.content);
+  const embeddings = await generateEmbeddingsBatch(clients.openai, embeddingInputs);
+  const chunkEmbeddings = embeddings.map(toVectorString);
 
   const { data, error } = await clients.supabase.rpc('document_create', {
     p_name: props.name,
@@ -103,12 +100,9 @@ export async function updateDocument(
   const chunkSummaries = enrichmentResults.map(result => result.summary);
   const chunkTokenCounts = enrichmentResults.map(result => result.tokenCount);
 
-  const chunkEmbeddings: string[] = [];
-  for (let index = 0; index < chunks.length; index++) {
-    const embeddingInput = chunkSummaries[index] + '\n\n' + chunks[index].content;
-    const embedding = await generateEmbedding(clients.openai, embeddingInput);
-    chunkEmbeddings.push(toVectorString(embedding));
-  }
+  const embeddingInputs = chunks.map((chunk, index) => chunkSummaries[index] + '\n\n' + chunk.content);
+  const embeddings = await generateEmbeddingsBatch(clients.openai, embeddingInputs);
+  const chunkEmbeddings = embeddings.map(toVectorString);
 
   const { error } = await clients.supabase.rpc('document_update', {
     p_id: props.id,
