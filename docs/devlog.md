@@ -2097,8 +2097,21 @@ Systematic review and fix of all 30 external API call sites across 10 files.
 - Main doc keeps intro sections (What is RAG, Starting a New RAG Project), system overview diagram, feature inventory tables, Production Defaults, and Ledger Implementation inline
 - All detailed sections replaced with 2-3 line summary + link to child doc
 
+### Ingestion Performance Benchmarking
+
+Discovered 73K doc ingestion takes ~12 minutes. Built benchmark script to test three optimizations:
+
+| Mode              | Total   | Tokens    | vs Baseline |
+|-------------------|---------|-----------|-------------|
+| Baseline          | 756s    | 2,841,704 |             |
+| Truncated only    | 291s    | 148,210   | 62% faster  |
+| **All combined**  | **30s** | 158,854   | **96% faster** |
+
+Key finding: truncated context (summary + neighbors instead of full doc) is the critical enabler. Reduces tokens 95%, unblocks parallelism by removing the TPM bottleneck.
+
+Not yet integrated into production code. Optimizations live in benchmark script only.
+
 ### Next
-1. Update internal references in renamed child docs (companion doc line)
-2. Sync architecture update to Ledger (#137)
-3. Phase 4.5.5: Semantic cache
-4. Revisit reranker if first-result accuracy plateaus
+1. Build observability system for pipeline performance measurement
+2. Integrate ingestion optimizations into production code
+3. Revisit reranker if first-result accuracy plateaus
