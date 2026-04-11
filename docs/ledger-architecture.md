@@ -198,6 +198,19 @@ Three modes, all backed by Postgres functions:
 4. [Rate Limiter] → Embed: `summary + "\n\n" + chunk.content` via text-embedding-3-small (1536 dims)
 5. Atomic RPC write: document + all chunks + audit in one transaction
 
+**Ingestion performance optimizations (benchmarked S38):**
+Three optimizations reduce large-document ingestion from ~12 min to ~30 sec (25x speedup, 95% token reduction):
+
+| Optimization             | What it does                                                              | Impact          |
+|--------------------------|---------------------------------------------------------------------------|-----------------|
+| Truncated context        | Document summary + header path + neighbors instead of full doc per chunk  | 65% faster, 95% fewer tokens |
+| Parallel enrichment      | 10 concurrent LLM calls (requires truncated context to avoid TPM limit)   | 96% faster (combined with truncated) |
+| Batch embeddings         | All chunks in 1-2 API calls instead of N sequential calls                 | Embedding 94% faster |
+
+Key insight: truncated context must come first. It reduces per-call tokens from ~18K to ~1K, which unblocks parallelism by removing the TPM (Tokens Per Minute) bottleneck.
+
+Benchmark script: `src/scripts/benchmark-ingestion.ts`. Results: `docs/benchmark-results.json`.
+
 ## Evaluation
 
 - **144 golden test cases** (132 normal + 12 out-of-scope) with **1,146 graded judgments**

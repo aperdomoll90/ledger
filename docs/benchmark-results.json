@@ -1,0 +1,87 @@
+[
+  {
+    "mode": "baseline",
+    "file": "docs/ledger-architecture-database-schemas.md",
+    "fileSize": 73744,
+    "chunkCount": 151,
+    "timestamp": "2026-04-11T00:32:49.933Z",
+    "timings": {
+      "chunking": 2,
+      "enrichment": 715115,
+      "embedding": 41274,
+      "total": 756391
+    },
+    "tokenEstimate": {
+      "enrichmentInput": 2841704,
+      "embeddingInput": 38437
+    }
+  },
+  {
+    "mode": "batch-embed",
+    "file": "docs/ledger-architecture-database-schemas.md",
+    "fileSize": 73744,
+    "chunkCount": 151,
+    "timestamp": "2026-04-11T01:09:32.851Z",
+    "timings": {
+      "chunking": 2,
+      "enrichment": 1219383,
+      "embedding": 2359,
+      "total": 1221744
+    },
+    "tokenEstimate": {
+      "enrichmentInput": 2841704,
+      "embeddingInput": 38435
+    }
+  },
+  {
+    "mode": "parallel-cr",
+    "file": "docs/ledger-architecture-database-schemas.md",
+    "fileSize": 73744,
+    "chunkCount": 151,
+    "timestamp": "2026-04-11T01:40:17.360Z",
+    "timings": {
+      "chunking": 1,
+      "enrichment": 904989,
+      "embedding": 47290,
+      "total": 952280
+    },
+    "tokenEstimate": {
+      "enrichmentInput": 2841704,
+      "embeddingInput": 38521
+    }
+  },
+  {
+    "mode": "truncated",
+    "file": "docs/ledger-architecture-database-schemas.md",
+    "fileSize": 73744,
+    "chunkCount": 151,
+    "timestamp": "2026-04-11T01:48:08.180Z",
+    "timings": {
+      "chunking": 1,
+      "enrichment": 253273,
+      "embedding": 37454,
+      "total": 290728
+    },
+    "tokenEstimate": {
+      "enrichmentInput": 148210,
+      "embeddingInput": 36616
+    }
+  },
+  {
+    "mode": "all",
+    "file": "docs/ledger-architecture-database-schemas.md",
+    "fileSize": 73744,
+    "chunkCount": 151,
+    "timestamp": "2026-04-11T01:52:12.973Z",
+    "timings": {
+      "chunking": 1,
+      "enrichment": 29459,
+      "embedding": 766,
+      "total": 30226
+    },
+    "tokenEstimate": {
+      "enrichmentInput": 158854,
+      "embeddingInput": 36061
+    }
+  }
+]

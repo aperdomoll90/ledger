@@ -163,6 +163,64 @@ Save everything to the database in one atomic transaction:
 
 If any step fails, nothing is committed. No orphaned chunks, no document without its search index, no missing audit trail.
 
+## Performance Optimization
+
+The ingestion pipeline has two expensive steps: Contextual Retrieval (LLM call per chunk) and embedding (API call per chunk). For large documents, these can take 10-15 minutes with naive sequential processing. Three optimizations reduce this to under a minute.
+
+### The bottleneck: Contextual Retrieval with large documents
+
+Contextual Retrieval sends the full document + each chunk to an LLM. For a 73K document with 151 chunks, that's 151 sequential LLM calls, each processing ~18K tokens. Two problems:
+
+1. **Time:** Each call takes 3-5 seconds. 151 calls = 12+ minutes.
+2. **Tokens:** 151 x 18K = 2.8 million input tokens per document. Expensive.
+3. **TPM (Tokens Per Minute) limit:** At 200K TPM (OpenAI gpt-4o-mini Tier 1), you can only process ~11 calls per minute with full-document context. Parallelism hits the TPM wall before helping.
+
+### Optimization 1: Truncated context
+
+Instead of sending the full document (73K) with every chunk, generate a document summary once (one LLM call), then send the summary (~200 words) + header path + neighboring chunks with each chunk. Total context per call drops from ~18K tokens to ~1K tokens.
+
+**How it works:**
+1. One LLM call: "Summarize this document in 150-200 words" (processes the full document once)
+2. For each chunk, build context from: document summary + section header path (parsed from markdown, no LLM needed) + previous chunk + next chunk
+3. LLM writes the context sentence using this smaller but sufficient context
+
+**Trade-off:** The LLM sees less of the document per chunk. For most chunks, the summary + neighbors provide enough context. For chunks that reference distant sections, the summary covers the topic even if it misses the specific detail.
+
+**Benchmark result (73K doc, 151 chunks):**
+- Enrichment: 715s down to 253s (65% faster)
+- Token usage: 2.8M down to 148K (95% reduction)
+- Critically: unblocks parallelism (see below)
+
+### Optimization 2: Parallel Contextual Retrieval
+
+Fire multiple LLM calls concurrently instead of sequentially. With a rate limiter controlling concurrency, process N chunks at a time.
+
+**Why it requires truncated context first:** With full-document context (~18K tokens per call), 10 concurrent calls use 180K tokens. The 200K TPM limit blocks you immediately. With truncated context (~1K tokens per call), 10 concurrent calls use only 10K tokens. TPM is no longer the constraint.
+
+**Benchmark result (truncated + parallel combined, 73K doc, 151 chunks):**
+- Enrichment: 715s down to 29s (96% faster)
+- The combination is what matters. Parallel alone (without truncation) was slower due to TPM throttling.
+
+### Optimization 3: Batch embeddings
+
+OpenAI's embedding API accepts an array of inputs in a single call. Instead of 151 separate API calls (one per chunk), send all 151 texts in 2 batch calls (batches of 100).
+
+**Benchmark result (73K doc, 151 chunks):**
+- Embedding: 41s down to 2.4s (94% faster)
+- Less impactful than enrichment optimization because embedding was only 5% of total time
+
+### Combined results
+
+Benchmarked on a 73K document (1,424 lines, 151 chunks):
+
+| Mode              | Enrichment | Embedding | Total   | Input Tokens | vs Baseline |
+|-------------------|------------|-----------|---------|--------------|-------------|
+| Baseline          | 715s       | 41s       | 756s    | 2,841,704    |             |
+| Truncated only    | 253s       | 37s       | 291s    | 148,210      | 62% faster  |
+| **All combined**  | **29s**    | **0.8s**  | **30s** | 158,854      | **96% faster** |
+
+**Key insight:** The order of optimizations matters. Truncated context must come first because it reduces per-call token usage by 95%, which unblocks parallelism by removing the TPM bottleneck. Parallel without truncation is actually slower due to TPM throttling.
+
 ## Migration & Re-Processing
 
 When you need to change how documents are processed (new embedding model, different chunking strategy):
