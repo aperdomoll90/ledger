@@ -160,8 +160,8 @@ export async function connectAndMigrate(creds: RawCredentials): Promise<ConnectR
   try {
     await openai.embeddings.create({ model: 'text-embedding-3-small', input: 'test' });
     console.error('OpenAI key valid.\n');
-  } catch (e) {
-    throw new Error(`OpenAI key invalid: ${(e as Error).message}`);
+  } catch (validationError) {
+    throw new Error(`OpenAI key invalid: ${(validationError as Error).message}`);
   }
 
   // Run migrations if new database
@@ -211,8 +211,8 @@ export async function init(): Promise<void> {
 
   try {
     await connectAndMigrate(creds);
-  } catch (e) {
-    console.error((e as Error).message);
+  } catch (migrationError) {
+    console.error((migrationError as Error).message);
     process.exit(1);
   }
 

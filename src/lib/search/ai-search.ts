@@ -214,8 +214,8 @@ export async function searchByVector(
       p_cached_results: results,
       p_source_doc_ids: sourceDocIds,
       p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
-    })).then(() => {}).catch((err: { message?: string }) => {
-      process.stderr.write(`[ledger] semantic cache store failed: ${err.message ?? 'unknown'}\n`);
+    })).then(() => {}).catch((cacheStoreError: { message?: string }) => {
+      process.stderr.write(`[ledger] semantic cache store failed: ${cacheStoreError.message ?? 'unknown'}\n`);
     });
   }
 
@@ -354,8 +354,8 @@ export async function searchHybrid(
       p_cached_results: results,
       p_source_doc_ids: sourceDocIds,
       p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
-    })).then(() => {}).catch((err: { message?: string }) => {
-      process.stderr.write(`[ledger] semantic cache store failed: ${err.message ?? 'unknown'}\n`);
+    })).then(() => {}).catch((cacheStoreError: { message?: string }) => {
+      process.stderr.write(`[ledger] semantic cache store failed: ${cacheStoreError.message ?? 'unknown'}\n`);
     });
   }
 

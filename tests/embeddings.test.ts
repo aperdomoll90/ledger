@@ -122,8 +122,8 @@ describe('chunkText — backward compatibility', () => {
   it('chunk_index increments from 0', () => {
     const text = 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.';
     const chunks = chunkText(text, { maxChunkSize: 25, overlapChars: 5 });
-    for (let i = 0; i < chunks.length; i++) {
-      expect(chunks[i].chunk_index).toBe(i);
+    for (let index = 0; index < chunks.length; index++) {
+      expect(chunks[index].chunk_index).toBe(index);
     }
   });
 

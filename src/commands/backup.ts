@@ -73,8 +73,8 @@ export function enableBackupCron(): void {
     const result = spawnSync('crontab', ['-'], { input: newCrontab, stdio: ['pipe', 'pipe', 'pipe'] });
     if (result.status !== 0) throw new Error(result.stderr?.toString() || 'crontab failed');
     console.error('Daily backup enabled (1am). View with `crontab -l`.');
-  } catch (e) {
-    console.error(`Failed to set cron: ${(e as Error).message}`);
+  } catch (cronError) {
+    console.error(`Failed to set cron: ${(cronError as Error).message}`);
     console.error(`Add manually: ${cronLine}`);
   }
 }
@@ -97,7 +97,7 @@ export function disableBackupCron(): void {
     const result = spawnSync('crontab', ['-'], { input: filtered, stdio: ['pipe', 'pipe', 'pipe'] });
     if (result.status !== 0) throw new Error(result.stderr?.toString() || 'crontab failed');
     console.error('Backup cron disabled.');
-  } catch (e) {
-    console.error(`Failed to update cron: ${(e as Error).message}`);
+  } catch (cronError) {
+    console.error(`Failed to update cron: ${(cronError as Error).message}`);
   }
 }

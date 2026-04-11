@@ -67,5 +67,5 @@ export function parseCachedResults(
 export function extractSourceDocIds(
   results: Array<{ id: number }>,
 ): number[] {
-  return [...new Set(results.map(r => r.id))];
+  return [...new Set(results.map(result => result.id))];
 }

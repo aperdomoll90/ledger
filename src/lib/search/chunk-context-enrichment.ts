@@ -151,9 +151,9 @@ export async function generateContextSummaries(
   const docSummary = (summaryResponse.choices[0].message.content ?? '').trim();
 
   // Step 2: Parallel enrichment with truncated context
-  const promises = chunks.map((chunk, i) => {
-    const prevChunk = i > 0 ? chunks[i - 1].content : '(start of document)';
-    const nextChunk = i < chunks.length - 1 ? chunks[i + 1].content : '(end of document)';
+  const promises = chunks.map((chunk, chunkIndex) => {
+    const prevChunk = chunkIndex > 0 ? chunks[chunkIndex - 1].content : '(start of document)';
+    const nextChunk = chunkIndex < chunks.length - 1 ? chunks[chunkIndex + 1].content : '(end of document)';
     const headerPath = findHeaderPath(documentContent, chunk.content);
 
     const prompt = CONTEXT_PROMPT
@@ -163,7 +163,7 @@ export async function generateContextSummaries(
       .replace('{CHUNK_CONTENT}', chunk.content)
       .replace('{NEXT_CHUNK}', nextChunk);
 
-    return openaiLimiter.schedule({ id: `enrich-${i}` }, async () => {
+    return openaiLimiter.schedule({ id: `enrich-${chunkIndex}` }, async () => {
       try {
         const response = await openai.chat.completions.create({
           model: CONTEXT_ENRICHMENT_MODEL,
@@ -176,7 +176,7 @@ export async function generateContextSummaries(
         });
 
         return {
-          index: i,
+          index: chunkIndex,
           summary: (response.choices[0].message.content ?? '').trim(),
           tokenCount: estimateTokenCount(chunk.content),
         };
@@ -191,10 +191,10 @@ export async function generateContextSummaries(
 
   const results = await Promise.all(promises);
   // Sort back to original order (parallel execution may complete out of order)
-  results.sort((a, b) => a.index - b.index);
+  results.sort((first, second) => first.index - second.index);
 
-  return results.map(r => ({
-    summary: r.summary,
-    tokenCount: r.tokenCount,
+  return results.map(enrichmentResult => ({
+    summary: enrichmentResult.summary,
+    tokenCount: enrichmentResult.tokenCount,
   }));
 }

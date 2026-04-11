@@ -228,9 +228,9 @@ async function enrichParallel(
   });
 
   const results = await Promise.all(promises);
-  results.sort((a, b) => a.index - b.index);
+  results.sort((first, second) => first.index - second.index);
 
-  return { summaries: results.map(r => r.summary), timeMs: Date.now() - start, inputTokens };
+  return { summaries: results.map(result => result.summary), timeMs: Date.now() - start, inputTokens };
 }
 
 async function enrichTruncated(
@@ -244,16 +244,16 @@ async function enrichTruncated(
   const { summary: docSummary, inputTokens: summaryTokens } = await generateDocSummary(documentContent);
   inputTokens += summaryTokens;
 
-  for (let i = 0; i < chunks.length; i++) {
-    const prevChunk = i > 0 ? chunks[i - 1].content : '(start of document)';
-    const nextChunk = i < chunks.length - 1 ? chunks[i + 1].content : '(end of document)';
-    const headerPath = findHeaderPath(documentContent, chunks[i].content);
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    const prevChunk = chunkIndex > 0 ? chunks[chunkIndex - 1].content : '(start of document)';
+    const nextChunk = chunkIndex < chunks.length - 1 ? chunks[chunkIndex + 1].content : '(end of document)';
+    const headerPath = findHeaderPath(documentContent, chunks[chunkIndex].content);
 
     const prompt = TRUNCATED_CONTEXT_PROMPT
       .replace('{DOCUMENT_SUMMARY}', docSummary)
       .replace('{HEADER_PATH}', headerPath || '(unknown section)')
       .replace('{PREV_CHUNK}', prevChunk)
-      .replace('{CHUNK_CONTENT}', chunks[i].content)
+      .replace('{CHUNK_CONTENT}', chunks[chunkIndex].content)
       .replace('{NEXT_CHUNK}', nextChunk);
     inputTokens += estimateTokens(prompt);
 
@@ -285,9 +285,9 @@ async function enrichTruncatedParallel(
   inputTokens += summaryTokens;
 
   // Truncated context = ~1K tokens per call. TPM-safe for full concurrency.
-  const promises = chunks.map((chunk, i) => {
-    const prevChunk = i > 0 ? chunks[i - 1].content : '(start of document)';
-    const nextChunk = i < chunks.length - 1 ? chunks[i + 1].content : '(end of document)';
+  const promises = chunks.map((chunk, chunkIndex) => {
+    const prevChunk = chunkIndex > 0 ? chunks[chunkIndex - 1].content : '(start of document)';
+    const nextChunk = chunkIndex < chunks.length - 1 ? chunks[chunkIndex + 1].content : '(end of document)';
     const headerPath = findHeaderPath(documentContent, chunk.content);
 
     const prompt = TRUNCATED_CONTEXT_PROMPT
@@ -298,7 +298,7 @@ async function enrichTruncatedParallel(
       .replace('{NEXT_CHUNK}', nextChunk);
     inputTokens += estimateTokens(prompt);
 
-    return openaiLimiter.schedule({ id: `tp-${i}` }, async () => {
+    return openaiLimiter.schedule({ id: `tp-${chunkIndex}` }, async () => {
       const response = await openai.chat.completions.create({
         model: CONTEXT_MODEL,
         messages: [
@@ -308,14 +308,14 @@ async function enrichTruncatedParallel(
         max_tokens: 150,
         temperature: 0,
       });
-      return { index: i, summary: (response.choices[0].message.content ?? '').trim() };
+      return { index: chunkIndex, summary: (response.choices[0].message.content ?? '').trim() };
     });
   });
 
   const results = await Promise.all(promises);
-  results.sort((a, b) => a.index - b.index);
+  results.sort((first, second) => first.index - second.index);
 
-  return { summaries: results.map(r => r.summary), timeMs: Date.now() - start, inputTokens };
+  return { summaries: results.map(result => result.summary), timeMs: Date.now() - start, inputTokens };
 }
 
 // =============================================================================
@@ -349,19 +349,19 @@ async function embedBatch(
   texts: string[],
 ): Promise<{ embeddings: number[][]; timeMs: number; inputTokens: number }> {
   const start = Date.now();
-  const inputTokens = texts.reduce((sum, t) => sum + estimateTokens(t), 0);
+  const inputTokens = texts.reduce((sum, text) => sum + estimateTokens(text), 0);
   const BATCH_SIZE = 100;
   const allEmbeddings: number[][] = [];
 
-  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-    const batch = texts.slice(i, i + BATCH_SIZE);
+  for (let batchStart = 0; batchStart < texts.length; batchStart += BATCH_SIZE) {
+    const batch = texts.slice(batchStart, batchStart + BATCH_SIZE);
     const result = await openaiLimiter.schedule(async () => {
       const { data, response } = await openai.embeddings.create({
         model: EMBEDDING_MODEL,
         input: batch,
       }).withResponse();
       await updateLimitsFromHeaders(openaiLimiter, response.headers);
-      return data.data.map(d => d.embedding);
+      return data.data.map(entry => entry.embedding);
     });
     allEmbeddings.push(...result);
   }
@@ -402,8 +402,8 @@ async function runBenchmark(
 
   console.log(`  Enrichment: ${enrichResult.timeMs}ms (~${enrichResult.inputTokens} input tokens)`);
 
-  const embeddingInputs = chunks.map((chunk, i) =>
-    enrichResult.summaries[i] + '\n\n' + chunk.content,
+  const embeddingInputs = chunks.map((chunk, index) =>
+    enrichResult.summaries[index] + '\n\n' + chunk.content,
   );
 
   const useBatch = mode === 'batch-embed' || mode === 'all';
@@ -440,8 +440,8 @@ async function runBenchmark(
 // =============================================================================
 
 async function main(): Promise<void> {
-  const modeArg = process.argv.find((_, i, arr) => arr[i - 1] === '--mode') as BenchmarkMode | undefined;
-  const fileArg = process.argv.find((_, i, arr) => arr[i - 1] === '--file');
+  const modeArg = process.argv.find((_, argIndex, argv) => argv[argIndex - 1] === '--mode') as BenchmarkMode | undefined;
+  const fileArg = process.argv.find((_, argIndex, argv) => argv[argIndex - 1] === '--file');
   const filePath = fileArg ?? DEFAULT_TEST_FILE;
 
   if (!existsSync(filePath)) {
@@ -465,13 +465,13 @@ async function main(): Promise<void> {
 
   console.log('\n=== SUMMARY ===');
   console.log('');
-  const baseline = results.find(r => r.mode === 'baseline');
-  for (const r of results) {
-    const speedup = baseline ? `${Math.round((1 - r.timings.total / baseline.timings.total) * 100)}%` : 'n/a';
+  const baseline = results.find(benchmarkResult => benchmarkResult.mode === 'baseline');
+  for (const benchmarkResult of results) {
+    const speedup = baseline ? `${Math.round((1 - benchmarkResult.timings.total / baseline.timings.total) * 100)}%` : 'n/a';
     const tokenSavings = baseline
-      ? `${Math.round((1 - r.tokenEstimate.enrichmentInput / baseline.tokenEstimate.enrichmentInput) * 100)}%`
+      ? `${Math.round((1 - benchmarkResult.tokenEstimate.enrichmentInput / baseline.tokenEstimate.enrichmentInput) * 100)}%`
       : 'n/a';
-    console.log(`${r.mode.padEnd(15)} | ${String(r.timings.total).padStart(7)}ms | enrichment: ${String(r.timings.enrichment).padStart(7)}ms | embedding: ${String(r.timings.embedding).padStart(7)}ms | speedup: ${speedup.padStart(4)} | token savings: ${tokenSavings}`);
+    console.log(`${benchmarkResult.mode.padEnd(15)} | ${String(benchmarkResult.timings.total).padStart(7)}ms | enrichment: ${String(benchmarkResult.timings.enrichment).padStart(7)}ms | embedding: ${String(benchmarkResult.timings.embedding).padStart(7)}ms | speedup: ${speedup.padStart(4)} | token savings: ${tokenSavings}`);
   }
 
   let existing: IBenchmarkResultProps[] = [];
@@ -487,7 +487,7 @@ async function main(): Promise<void> {
   console.log(`\nResults saved to ${RESULTS_FILE}`);
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch((error) => {
+  console.error(error);
   process.exit(1);
 });
