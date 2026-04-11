@@ -7,6 +7,8 @@ AI identity and memory system. MCP server + CLI for syncing agent memory across 
 **Package:** @aperdomoll90/ledger-ai | **Command:** ledger
 **Stack:** Node.js | TypeScript (strict) | Supabase | pgvector | OpenAI | MCP | Commander
 
+**Design philosophy:** Ledger is designed as a production-grade system, not a personal tool. All architecture decisions, thresholds, caching strategies, and error handling must assume scale (thousands of documents, high query volume, multiple concurrent users). Never optimize for current corpus size or usage patterns. Build for the system it will become, not what it is today.
+
 ## Project Structure
 
 ```

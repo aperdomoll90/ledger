@@ -16,6 +16,7 @@
     - [embedding_models](#embedding_models)
   - Caching
     - [query_cache](#query_cache)
+    - [semantic_cache](#semantic_cache)
   - History
     - [audit_log](#audit_log) (partitioned: audit_log_2026, audit_log_2027)
   - Security
@@ -258,6 +259,38 @@ CREATE TABLE query_cache (
   hit_count          integer      NOT NULL DEFAULT 0,
   created_at         timestamptz  NOT NULL DEFAULT now(),
   last_used_at       timestamptz  NOT NULL DEFAULT now()
+);
+```
+
+#### semantic_cache
+
+Layer 2 cache: stores full search results keyed by query embedding similarity. When a semantically similar query arrives (cosine > 0.90), returns cached results directly, skipping the entire search pipeline. Invalidated automatically when source documents change.
+
+| Column               | Type         | Nullable | Default                       | Purpose                                              |
+|----------------------|--------------|----------|-------------------------------|------------------------------------------------------|
+| `id`                 | bigserial    | NO       | auto                          | Primary key                                          |
+| `query_text`         | text         | NO       |                               | Original query (for debugging/observability)         |
+| `query_embedding`    | vector(1536) | NO       |                               | Query vector for HNSW similarity lookup              |
+| `search_mode`        | text         | NO       |                               | 'vector', 'keyword', or 'hybrid'                    |
+| `search_params`      | jsonb        | NO       |                               | Serialized search parameters (threshold, limit, filters) |
+| `cached_results`     | jsonb        | NO       |                               | Full ISearchResultProps[] objects                    |
+| `source_doc_ids`     | int[]        | NO       |                               | Reverse index: doc IDs in results (GIN indexed)     |
+| `embedding_model_id` | text         | NO       |                               | Version key (cache miss on model change)            |
+| `created_at`         | timestamptz  | NO       | now()                         | When cached                                          |
+| `expires_at`         | timestamptz  | NO       | now() + interval '7 days'     | TTL expiry (safety net behind active invalidation)  |
+
+```sql
+CREATE TABLE semantic_cache (
+  id                 bigserial    PRIMARY KEY,
+  query_text         text         NOT NULL,
+  query_embedding    vector(1536) NOT NULL,
+  search_mode        text         NOT NULL CHECK (search_mode IN ('vector', 'keyword', 'hybrid')),
+  search_params      jsonb        NOT NULL,
+  cached_results     jsonb        NOT NULL,
+  source_doc_ids     int[]        NOT NULL,
+  embedding_model_id text         NOT NULL,
+  created_at         timestamptz  NOT NULL DEFAULT now(),
+  expires_at         timestamptz  NOT NULL DEFAULT now() + interval '7 days'
 );
 ```
 

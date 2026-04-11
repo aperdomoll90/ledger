@@ -1,8 +1,8 @@
 # Ledger — Database Architecture
 
-> Overview of Ledger's database: 15 tables, 21 functions, 61 indexes. Supabase (Postgres + pgvector).
+> Overview of Ledger's database: 16 tables, 24 functions, 64 indexes. Supabase (Postgres + pgvector).
 >
-> Updated: 2026-04-09 (Phase 4.6.2). For full details, see the child docs linked below.
+> Updated: 2026-04-10 (Phase 4.5.5 semantic cache). For full details, see the child docs linked below.
 
 The database is the backbone of Ledger. Documents go in, get chunked and embedded for search, and every change is tracked. Postgres handles the business logic — TypeScript just prepares data (chunks, embeddings, hashes) and calls RPC functions. The database does the rest: transactions, auditing, versioning, access control.
 
@@ -11,12 +11,12 @@ The database is the backbone of Ledger. Documents go in, get chunked and embedde
 ## Table of Contents
 
 - [Detail Documents](#detail-documents)
-- [Tables (15)](#tables-15)
+- [Tables (16)](#tables-16)
   - [By function](#by-function)
   - [How data flows between tables](#how-data-flows-between-tables)
   - [Two storage patterns](#two-storage-patterns)
   - [Two evaluation subsystems](#two-evaluation-subsystems)
-- [Functions (21)](#functions-21)
+- [Functions (24)](#functions-24)
 - [Indexes (61)](#indexes-61)
 - [Key Design Patterns](#key-design-patterns)
 - [Infrastructure](#infrastructure)
@@ -33,7 +33,7 @@ The database is the backbone of Ledger. Documents go in, get chunked and embedde
 
 ---
 
-## Tables (15)
+## Tables (16)
 
 ### By function
 
@@ -44,6 +44,7 @@ The database is the backbone of Ledger. Documents go in, get chunked and embedde
 | Storage    | `document_versions`            | Content snapshots before each update                        | Yes           |
 | Storage    | `embedding_models`             | Model registry — tracks which model generated which vectors | Yes           |
 | Caching    | `query_cache`                  | Cached query embeddings — avoids repeat OpenAI API calls    | Yes           |
+| Caching    | `semantic_cache`               | Layer 2 — cached full search results by query similarity    | Yes           |
 | History    | `audit_log`                    | Append-only change tracking (partitioned by year)           | Yes           |
 | Security   | `agents`                       | Agent registry (Phase 6 — table exists, not enforced)       | No            |
 | Ingestion  | `ingestion_queue`              | Async file processing pipeline (Phase 4.6 — table only)    | No            |
@@ -62,6 +63,7 @@ documents ──< audit_log           (1:N, no FK — survives deletion)
 documents >── embedding_models    (N:1, which model embedded this doc)
 
 query_cache >── embedding_models  (N:1, which model generated the cached embedding)
+semantic_cache ──> documents      (source_doc_ids int[] — reverse index, no FK)
 ingestion_queue >── documents     (N:1, links to created doc on completion)
 
 search_evaluations ──> search_evaluation_aggregates  (daily cron crunches raw → summary)
@@ -91,13 +93,15 @@ They're independent but designed to feed each other: spot failures in production
 
 ---
 
-## Functions (21)
+## Functions (24)
 
 | Category      | Count | What they do                                                  |
 |---------------|-------|---------------------------------------------------------------|
 | Document ops  | 6     | create, update, update_fields, delete, restore, purge         |
 | Search        | 4     | vector, keyword, hybrid (RRF), smart retrieval                |
+| Caching       | 3     | semantic_cache_lookup, semantic_cache_store, semantic_cache_cleanup |
 | Maintenance   | 7     | aggregation, cleanup (3 tables), partition, trigger, purge    |
+| Eval helpers  | 4     | judgment_create, judgment_update, judgment_delete, count_golden_with_min_judgments |
 
 All document writes go through RPC functions — never direct `.update()` on the documents table. The functions handle transactions (document + chunks + audit = atomic), version snapshots, and domain syncing.
 
@@ -105,14 +109,15 @@ See `ledger-architecture-database-functions.md` for full SQL.
 
 ---
 
-## Indexes (61)
+## Indexes (64)
 
 | Table                          | Count | Key indexes                                           |
 |--------------------------------|-------|-------------------------------------------------------|
 | `documents`                    | 12    | GIN on search_vector (keyword search), btree on domain/type/project |
 | `document_chunks`              | 10    | 6 HNSW indexes (1 global + 5 per-domain) for vector search |
 | `audit_log` + partitions       | 12    | btree on document_id, agent, domain (x3 for parent + 2 partitions) |
-| `query_cache`                  | 4     | HNSW on embedding (semantic cache), btree on last_used_at |
+| `query_cache`                  | 4     | HNSW on embedding, btree on last_used_at                  |
+| `semantic_cache`               | 3     | HNSW on query_embedding, GIN on source_doc_ids, btree on expires_at |
 | `document_versions`            | 3     | btree on document_id + version_number                 |
 | `search_evaluations`           | 4     | btree on created_at, feedback, zero-result filter     |
 | `search_evaluation_aggregates` | 3     | btree + unique on date                                |

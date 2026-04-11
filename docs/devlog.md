@@ -2078,3 +2078,27 @@ Systematic review and fix of all 30 external API call sites across 10 files.
 1. Sync architecture update to Ledger (#137) via sync-local-docs.ts
 2. Phase 4.5.5: Semantic cache
 3. Revisit reranker if first-result accuracy plateaus
+
+---
+
+## Session 38 — 2026-04-10
+
+### Documentation restructure: RAG architecture reference
+
+- Reorganized main doc TOC from flat numbered list to domain-grouped structure (Core Pipeline, Quality, Security & Access, Operations, Interface)
+- Added documentation structure convention to global CLAUDE.md (TOC on top, overview first, extract child docs when >150 lines, group by concern)
+- Extracted all 11 detailed sections into child docs with hierarchical naming: `reference-rag-{group}-{section}.md`
+- Renamed 2 existing files: `reference-rag-database-schemas.md` → `reference-rag-core-database-schemas.md`, `reference-rag-evaluation.md` → `reference-rag-quality-evaluation.md`
+- Created 9 new child docs: core-ingestion, core-query-pipeline, quality-improvement, security-access-control, security-defenses, operations-observability, operations-scaling, operations-deployment, interface-api
+- Main doc slimmed from 1,455 lines to 512 lines (overview index with summaries + links)
+
+### Key decisions
+- File naming encodes hierarchy: `reference-rag-{group}-{section}` so files sort by domain in file browsers
+- Main doc keeps intro sections (What is RAG, Starting a New RAG Project), system overview diagram, feature inventory tables, Production Defaults, and Ledger Implementation inline
+- All detailed sections replaced with 2-3 line summary + link to child doc
+
+### Next
+1. Update internal references in renamed child docs (companion doc line)
+2. Sync architecture update to Ledger (#137)
+3. Phase 4.5.5: Semantic cache
+4. Revisit reranker if first-result accuracy plateaus

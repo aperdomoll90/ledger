@@ -1,8 +1,8 @@
 # Ledger — Database Functions
 
-> Full SQL for all 17 Postgres functions. Signatures, parameters, implementation.
+> Full SQL for all 20 Postgres functions. Signatures, parameters, implementation.
 >
-> Updated: 2026-04-03. Parent doc: `ledger-architecture-database.md`
+> Updated: 2026-04-10 (Phase 4.5.5 semantic cache). Parent doc: `ledger-architecture-database.md`
 
 ---
 
@@ -40,9 +40,9 @@
 | Function                 | Returns  | Purpose                                           |
 |--------------------------|----------|---------------------------------------------------|
 | `document_create`        | bigint   | Insert document + chunks + audit (atomic)         |
-| `document_update`        | void     | Save version → update content → replace chunks → audit |
+| `document_update`        | void     | Invalidate semantic cache → save version → update content → replace chunks → audit |
 | `document_update_fields` | void     | Update metadata columns (no re-embedding) → sync chunk domain → audit |
-| `document_delete`        | void     | Save to audit diff → soft delete → remove chunks  |
+| `document_delete`        | void     | Invalidate semantic cache → save to audit diff → soft delete → remove chunks |
 | `document_restore`       | void     | Clear deleted_at → audit (chunks must be regenerated separately) |
 | `document_purge`         | integer  | Hard delete docs past grace period (default 30 days) |
 
@@ -54,6 +54,14 @@
 | `match_documents_keyword`  | TABLE   | Keyword search — tsvector + `websearch_to_tsquery`        |
 | `match_documents_hybrid`   | TABLE   | Hybrid — vector + keyword combined via RRF fusion         |
 | `retrieve_context`         | TABLE   | Smart retrieval — full doc if small, chunk + neighbors if large |
+
+### Caching (3)
+
+| Function                   | Returns | Purpose                                                   |
+|----------------------------|---------|-----------------------------------------------------------|
+| `semantic_cache_lookup`    | jsonb   | Find cached results by query embedding similarity (> 0.90)|
+| `semantic_cache_store`     | void    | Save full search results to cache with reverse index      |
+| `semantic_cache_cleanup`   | integer | Purge expired entries (TTL = 7 days)                      |
 
 ### Evaluation and Maintenance (7)
 
@@ -491,6 +499,79 @@ BEGIN
       AND LEAST(v_doc.chunk_count - 1, p_matched_chunk_index + p_neighbor_count)
   GROUP BY v_doc.id, v_doc.name, v_doc.content;
   RETURN;
+END;
+$$;
+```
+
+### semantic_cache_lookup
+
+Find a cached search result by query embedding similarity. Returns the cached JSONB results if a match is found (cosine similarity > threshold, same search mode, same parameters, not expired). Returns NULL on cache miss.
+
+```sql
+CREATE OR REPLACE FUNCTION semantic_cache_lookup(
+  p_query_embedding    vector(1536),
+  p_search_mode        text,
+  p_search_params      jsonb,
+  p_embedding_model_id text,
+  p_similarity_threshold float DEFAULT 0.90
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_result jsonb;
+BEGIN
+  SELECT cached_results INTO v_result
+  FROM semantic_cache
+  WHERE 1 - (query_embedding <=> p_query_embedding) >= p_similarity_threshold
+    AND search_mode = p_search_mode
+    AND search_params = p_search_params
+    AND embedding_model_id = p_embedding_model_id
+    AND expires_at > now()
+  ORDER BY query_embedding <=> p_query_embedding
+  LIMIT 1;
+
+  RETURN v_result;
+END;
+$$;
+```
+
+### semantic_cache_store
+
+Store search results in the semantic cache for future similar queries. Called after a cache miss, fire-and-forget (non-blocking).
+
+```sql
+CREATE OR REPLACE FUNCTION semantic_cache_store(
+  p_query_text         text,
+  p_query_embedding    vector(1536),
+  p_search_mode        text,
+  p_search_params      jsonb,
+  p_cached_results     jsonb,
+  p_source_doc_ids     int[],
+  p_embedding_model_id text
+) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO semantic_cache (
+    query_text, query_embedding, search_mode, search_params,
+    cached_results, source_doc_ids, embedding_model_id
+  ) VALUES (
+    p_query_text, p_query_embedding, p_search_mode, p_search_params,
+    p_cached_results, p_source_doc_ids, p_embedding_model_id
+  );
+END;
+$$;
+```
+
+### semantic_cache_cleanup
+
+Purge expired cache entries. Called periodically (manual or cron). Returns the number of deleted rows.
+
+```sql
+CREATE OR REPLACE FUNCTION semantic_cache_cleanup()
+RETURNS int LANGUAGE plpgsql AS $$
+DECLARE
+  v_count int;
+BEGIN
+  DELETE FROM semantic_cache WHERE expires_at < now();
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
 END;
 $$;
 ```
