@@ -1,6 +1,6 @@
 # Ledger — Architecture Overview
 
-> Last updated: 2026-04-14 (Session 41)
+> Last updated: 2026-04-14 (Session 42)
 
 ## Table of Contents
 
@@ -14,6 +14,7 @@
 - [RAG Pipeline](#rag-pipeline-current)
 - [Evaluation](#evaluation)
 - [Documents](#documents)
+- [Observability](#observability)
 - [Repo Structure](#repo-structure)
 
 ## System Layers
@@ -231,6 +232,41 @@ Benchmark script: `src/scripts/benchmark-ingestion.ts`. Results: `docs/benchmark
 
 Every document has a unique `name` (NOT NULL, CHECK constraint enforces lowercase + hyphens). All fields are real columns with CHECK constraints — no JSONB metadata.
 
+## Observability
+
+Pipeline observability using self-hosted **Langfuse** (open-source LLM observability platform). Built on **distributed tracing**, a pattern from Google's Dapper paper (2010), standardized via **OpenTelemetry (OTel)**. Core concepts:
+
+- A **trace** is one end-to-end operation (e.g., ingesting a document)
+- **Spans** are timed sub-steps within a trace (e.g., chunking, enrichment, embedding)
+- **Generations** are a Langfuse-specific span type for LLM calls, with token counts and cost
+
+This is the same pattern used by Netflix, Uber, and Stripe for service observability. Langfuse adapts it for LLM pipelines, adding token usage and cost as first-class concepts alongside timing. Because it builds on OpenTelemetry, the instrumentation is vendor-neutral: swapping Langfuse for Datadog or Grafana Tempo means changing the exporter, not the instrumentation code.
+
+**Infrastructure:** 6 Docker containers (web, worker, Postgres, ClickHouse, Redis, MinIO). Single exposed port: 9100. All other services internal to Docker network.
+
+**SDK integration:** Three packages (`@langfuse/tracing`, `@langfuse/openai`, `@langfuse/otel`). OpenAI client wrapped via `observeOpenAI()` for automatic LLM/embedding call capture. Manual spans for non-API steps (chunking, DB writes).
+
+**Graceful degradation:** When Langfuse env vars are absent, observability is silently disabled. Ledger works exactly as before. Observability is opt-in, not a dependency.
+
+**What it tracks vs what the eval system tracks:**
+
+| Concern               | Eval system                                  | Langfuse                                     |
+|-----------------------|----------------------------------------------|----------------------------------------------|
+| Core question         | "Are the right documents coming back?"       | "How long did it take and what did it cost?" |
+| Metrics               | Hit rate, MRR, NDCG, recall                  | Latency per span, token usage, cost, errors  |
+| Update frequency      | Periodic eval runs                           | Every pipeline invocation (always-on)        |
+
+**Phasing:**
+
+| Phase   | Scope                                                        | Status         |
+|---------|--------------------------------------------------------------|----------------|
+| Phase 1 | Ingestion traces (create/update document)                   | In progress    |
+| Phase 2 | Search traces (query embedding, cache, search, RRF)         | Deferred       |
+| Phase 3 | Eval traces (golden queries, eval runs)                     | Deferred       |
+| Phase 4 | Alerting (budget thresholds, latency anomalies)             | Deferred       |
+
+**Spec:** `docs/superpowers/specs/2026-04-14-observability-langfuse-design.md`
+
 ## Repo Structure
 
 ```
@@ -256,6 +292,7 @@ src/
 │   │   └── eval-judge-session.ts  → Interactive grading CLI
 │   ├── config.ts                  → Config loading
 │   ├── rate-limiter.ts            → Proactive rate limiting (Bottleneck)
+│   ├── observability.ts           → Langfuse tracing init, helpers, shutdown
 │   └── errors.ts                  → Typed errors, exit codes
 ├── scripts/
 │   ├── reindex.ts                 → Bulk re-chunk + re-embed
@@ -264,7 +301,9 @@ src/
 │   ├── sync-local-docs.ts         → Bulk doc sync + create (bypasses MCP)
 │   ├── drop-golden-query.ts       → Remove golden dataset entries
 │   └── convert-judgments-to-graded.ts → One-time migration
-└── migrations/                    → 000-009 SQL migrations
+├── migrations/                    → 000-009 SQL migrations
+└── docker/
+    └── langfuse/                  → Langfuse docker-compose + env template
 
 tests/                             → 220 tests (16 files)
 ```
