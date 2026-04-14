@@ -1,6 +1,6 @@
 # Ledger — Architecture Overview
 
-> Last updated: 2026-04-10 (Session 37 continued)
+> Last updated: 2026-04-14 (Session 41)
 
 ## Table of Contents
 
@@ -55,17 +55,17 @@ Cross-cutting: Rate Limiting │ Error Handling │ Access Control │ Evaluatio
 | Document                                            | What it covers                                                             |
 |-----------------------------------------------------|----------------------------------------------------------------------------|
 | **`ledger-architecture`** (this doc)                | System overview, how layers connect                                        |
-| **`ledger-architecture-database`** (#138)           | 9 tables, columns, constraints, indexes                                    |
-| **`ledger-architecture-database-functions`** (#139) | 17 Postgres functions — signatures, params, what they do                   |
-| **`ledger-architecture-typescript`** (#140)          | 5 library modules, interfaces, dependency graph                            |
+| **`ledger-architecture-database`** (#138)           | 16 tables, columns, constraints, indexes                                   |
+| **`ledger-architecture-database-functions`** (#139) | 24 Postgres functions — signatures, params, what they do                   |
+| **`ledger-architecture-typescript`** (#140)          | 9 library modules, interfaces, dependency graph                            |
 | **`ledger-architecture-mcp-tools`** (#141)          | 16 MCP tools — params, when to use each                                    |
-| **`ledger-architecture-rag-features`** (#145)       | RAG feature map — every capability by function, where it lives, missing    |
+| **`ledger-architecture-rag-features`** (#145)       | RAG feature map — every capability by function, where it lives             |
 
 ## Database
 
-**9 tables** — `documents` (source of truth), `document_chunks` (search index), `audit_log` (change tracking, partitioned by year), `agents` (registry), `embedding_models` (model registry), `query_cache` (embedding cache), `document_versions` (content snapshots), `search_evaluations` (quality metrics), `ingestion_queue` (file processing pipeline).
+**16 tables** — `documents` (source of truth), `document_chunks` (search index), `audit_log` (change tracking, partitioned by year), `agents` (registry), `embedding_models` (model registry), `query_cache` (embedding cache), `semantic_cache` (layer 2 result cache), `document_versions` (content snapshots), `search_evaluations` (quality metrics), `search_evaluation_aggregates` (daily summaries), `eval_golden_dataset` (144 test cases), `eval_golden_judgments` (graded relevance), `eval_runs` (stored eval results), `ingestion_queue` (file processing pipeline), plus 2 audit partitions.
 
-**17 Postgres functions** — 6 document operations (create, update, update_fields, delete, purge, restore), 4 search (vector, keyword, hybrid RRF, retrieve_context), 7 utilities (auto-partition, cache cleanup, version cleanup, updated_at trigger, eval aggregation, eval cleanup).
+**24 Postgres functions** — 6 document operations (create, update, update_fields, delete, purge, restore), 4 search (vector, keyword, hybrid RRF, retrieve_context), 3 caching (semantic_cache_lookup, semantic_cache_store, semantic_cache_cleanup), 4 eval helpers (judgment CRUD, golden count), 7 utilities (auto-partition, cache cleanup, version cleanup, updated_at trigger, eval aggregation, eval cleanup, purge).
 
 **Key patterns:**
 - Document-chunk separation: content in `documents`, search index in `document_chunks`
@@ -260,7 +260,9 @@ src/
 ├── scripts/
 │   ├── reindex.ts                 → Bulk re-chunk + re-embed
 │   ├── batch-grade.ts             → Batch grading script
-│   ├── sync-local-docs.ts         → Bulk doc sync (bypasses MCP)
+│   ├── benchmark-ingestion.ts     → Ingestion performance benchmarks (5 modes)
+│   ├── sync-local-docs.ts         → Bulk doc sync + create (bypasses MCP)
+│   ├── drop-golden-query.ts       → Remove golden dataset entries
 │   └── convert-judgments-to-graded.ts → One-time migration
 └── migrations/                    → 000-009 SQL migrations
 
