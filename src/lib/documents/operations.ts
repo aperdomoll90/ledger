@@ -6,6 +6,7 @@
 import type { IClientsProps, ICreateDocumentProps, IUpdateDocumentProps, IUpdateFieldsProps, IChunkConfigProps } from './classification.js';
 import { contentHash, chunkText, generateEmbeddingsBatch, toVectorString } from '../search/embeddings.js';
 import { generateContextSummaries } from '../search/chunk-context-enrichment.js';
+import { startTrace, startSpan } from '../observability.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
 
@@ -33,20 +34,35 @@ export async function createDocument(
   const config = { ...DEFAULT_CHUNK_CONFIG, ...chunkConfig };
   const hash = contentHash(props.content);
 
+  const trace = startTrace('document-ingestion', {
+    tags: ['ingestion', 'create'],
+    metadata: { documentName: props.name, domain: props.domain, documentType: props.document_type },
+    input: { contentLength: props.content.length },
+  });
+
   // Chunk
+  const chunkSpan = startSpan('chunking', { input: { contentLength: props.content.length } });
   const chunks = chunkText(props.content, config);
   const chunkContents = chunks.map(chunk => chunk.content);
+  chunkSpan.update({ output: { chunkCount: chunks.length, avgChunkSize: Math.round(props.content.length / chunks.length) } });
+  chunkSpan.end();
 
-  // Enrich — generate context summaries per chunk
+  // Enrich — generate context summaries per chunk (LLM calls auto-traced by wrapped client)
+  const enrichSpan = startSpan('context-enrichment', { metadata: { chunkCount: chunks.length, model: 'gpt-4o-mini' } });
   const enrichmentResults = await generateContextSummaries(clients.openai, chunks, props.content);
   const chunkSummaries = enrichmentResults.map(result => result.summary);
   const chunkTokenCounts = enrichmentResults.map(result => result.tokenCount);
+  enrichSpan.end();
 
-  // Embed — summary + "\n\n" + chunk content (batch: one API call per 100 chunks)
+  // Embed — summary + "\n\n" + chunk content (batch: one API call per 100 chunks, auto-traced)
+  const embedSpan = startSpan('batch-embedding', { metadata: { chunkCount: chunks.length, model: 'text-embedding-3-small' } });
   const embeddingInputs = chunks.map((chunk, index) => chunkSummaries[index] + '\n\n' + chunk.content);
   const embeddings = await generateEmbeddingsBatch(clients.openai, embeddingInputs);
   const chunkEmbeddings = embeddings.map(toVectorString);
+  embedSpan.end();
 
+  // DB write
+  const dbSpan = startSpan('db-write', { input: { chunkCount: chunks.length } });
   const { data, error } = await clients.supabase.rpc('document_create', {
     p_name: props.name,
     p_domain: props.domain,
@@ -74,6 +90,10 @@ export async function createDocument(
     p_chunk_token_counts: chunkTokenCounts,
     p_chunk_overlap: config.overlapChars,
   });
+  dbSpan.update({ output: { documentId: data } });
+  dbSpan.end();
+
+  trace.end();
 
   if (error) throw new Error(`Failed to create document "${props.name}" (${props.domain}/${props.document_type}): ${error.message}`);
   return data as number;
@@ -93,17 +113,35 @@ export async function updateDocument(
   const config = { ...DEFAULT_CHUNK_CONFIG, ...chunkConfig };
   const hash = contentHash(props.content);
 
+  const trace = startTrace('document-ingestion', {
+    tags: ['ingestion', 'update'],
+    metadata: { documentId: props.id },
+    input: { contentLength: props.content.length },
+  });
+
+  // Chunk
+  const chunkSpan = startSpan('chunking', { input: { contentLength: props.content.length } });
   const chunks = chunkText(props.content, config);
   const chunkContents = chunks.map(chunk => chunk.content);
+  chunkSpan.update({ output: { chunkCount: chunks.length, avgChunkSize: Math.round(props.content.length / chunks.length) } });
+  chunkSpan.end();
 
+  // Enrich (LLM calls auto-traced)
+  const enrichSpan = startSpan('context-enrichment', { metadata: { chunkCount: chunks.length, model: 'gpt-4o-mini' } });
   const enrichmentResults = await generateContextSummaries(clients.openai, chunks, props.content);
   const chunkSummaries = enrichmentResults.map(result => result.summary);
   const chunkTokenCounts = enrichmentResults.map(result => result.tokenCount);
+  enrichSpan.end();
 
+  // Embed (auto-traced)
+  const embedSpan = startSpan('batch-embedding', { metadata: { chunkCount: chunks.length, model: 'text-embedding-3-small' } });
   const embeddingInputs = chunks.map((chunk, index) => chunkSummaries[index] + '\n\n' + chunk.content);
   const embeddings = await generateEmbeddingsBatch(clients.openai, embeddingInputs);
   const chunkEmbeddings = embeddings.map(toVectorString);
+  embedSpan.end();
 
+  // DB write
+  const dbSpan = startSpan('db-write', { input: { chunkCount: chunks.length } });
   const { error } = await clients.supabase.rpc('document_update', {
     p_id: props.id,
     p_content: props.content,
@@ -119,6 +157,8 @@ export async function updateDocument(
     p_chunk_token_counts: chunkTokenCounts,
     p_chunk_overlap: config.overlapChars,
   });
+  dbSpan.end();
+  trace.end();
 
   if (error) throw new Error(`Failed to update document #${props.id}: ${error.message}`);
 }
