@@ -2166,3 +2166,52 @@ Full audit of all Ledger docs (Ledger DB + local files) against actual codebase 
 ### Next
 1. Build observability system for pipeline performance measurement
 2. Revisit reranker if first-result accuracy plateaus
+
+---
+
+## Session 42 -- 2026-04-14
+
+### Pipeline Observability with Langfuse (Phase 1: Ingestion)
+
+Added automated pipeline observability to Ledger using self-hosted Langfuse. Every document ingestion now produces a trace with step-level timing, token usage, and cost.
+
+**Infrastructure:**
+- Installed Docker Engine on the machine (first time)
+- Self-hosted Langfuse stack: 6 Docker containers (web, worker, Postgres, ClickHouse, Redis, MinIO)
+- Single exposed port: 9100. All other services internal to Docker network.
+- Docker Compose config at `docker/langfuse/docker-compose.yml`
+
+**SDK integration (4 packages):**
+- `@langfuse/tracing`, `@langfuse/openai`, `@langfuse/otel`, `@opentelemetry/sdk-trace-node`
+- OpenAI client wrapped with `observeOpenAI()` in `config.ts` for auto-capture of all LLM/embedding calls
+- Manual spans for non-API steps (chunking, DB write) via `src/lib/observability.ts`
+- Graceful degradation: Ledger works identically when Langfuse env vars are absent
+
+**Key implementation decisions:**
+- Moved `initObservability()` into `loadConfig()` (after `dotenv.config()`) to ensure env vars are loaded
+- Replaced `.withResponse()` on OpenAI embedding calls with custom `fetch` that intercepts rate limit headers at the HTTP level. This keeps adaptive header reading working through the Langfuse proxy and extends it to all OpenAI calls (not just embeddings).
+- Used `program.parseAsync().then(() => shutdownObservability())` for reliable trace flushing on normal exit
+- `CLICKHOUSE_CLUSTER_ENABLED=false` required for single-node ClickHouse (Langfuse v3 defaults to replicated tables)
+
+**Files changed:**
+- New: `docker/langfuse/docker-compose.yml`, `docker/langfuse/.env.example`, `src/lib/observability.ts`, `tests/observability.test.ts`
+- Modified: `src/lib/config.ts`, `src/lib/documents/operations.ts`, `src/lib/search/embeddings.ts`, `src/lib/documents/classification.ts`, `src/cli.ts`, `docs/ledger-architecture.md`
+
+**Architecture docs updated:**
+- `ledger-architecture.md` (local + Ledger #137): added Observability section with distributed tracing concepts, phasing table, repo structure update
+
+**Design + plan docs:**
+- `docs/superpowers/specs/2026-04-14-observability-langfuse-design.md`
+- `docs/superpowers/plans/2026-04-14-observability-langfuse.md`
+
+### Verified
+- 226 tests pass (6 new observability tests)
+- End-to-end trace visible in Langfuse dashboard with: chunking span, context-enrichment span (with nested OpenAI.chat generations), batch-embedding span (with nested OpenAI.embeddings generation), db-write span
+- Token counts and cost auto-calculated per generation
+- Build succeeds
+
+### Next
+1. Phase 2: Search traces (query embedding, cache, vector/keyword, RRF)
+2. Phase 3: Eval traces
+3. Wire observability into MCP server entry point
+4. Revisit reranker if first-result accuracy plateaus
