@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { createRequire } from 'module';
 import { loadConfig } from './lib/config.js';
+import { shutdownObservability } from './lib/observability.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -31,6 +32,14 @@ process.on('unhandledRejection', (rejection) => {
   console.error(rejection instanceof Error ? rejection.message : String(rejection));
   process.exit(1);
 });
+
+// Flush pending Langfuse traces before exit
+const shutdown = async () => {
+  await shutdownObservability();
+  process.exit(0);
+};
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 const program = new Command();
 program
@@ -255,4 +264,4 @@ program
     await lint({ personal: options.personal ?? false, diff: options.diff ?? false });
   });
 
-program.parse();
+program.parseAsync().then(() => shutdownObservability());
