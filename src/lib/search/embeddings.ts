@@ -4,7 +4,7 @@
 
 import { createHash } from 'crypto';
 import type { ChunkStrategy, ChunkContentType, IOpenAIClientProps, ISupabaseClientProps, IChunkConfigProps } from '../documents/classification.js';
-import { openaiLimiter, updateLimitsFromHeaders } from '../rate-limiter.js';
+import { openaiLimiter } from '../rate-limiter.js';
 
 // =============================================================================
 // Chunk interface — what chunkText() returns
@@ -249,13 +249,12 @@ function forceCharSplit(
 export async function generateEmbedding(openai: IOpenAIClientProps, text: string): Promise<number[]> {
   try {
     return await openaiLimiter.schedule(async () => {
-      const { data, response } = await openai.embeddings.create({
+      const result = await openai.embeddings.create({
         model: EMBEDDING_MODEL,
         input: text,
-      }).withResponse();
+      });
 
-      await updateLimitsFromHeaders(openaiLimiter, response.headers);
-      return data.data[0].embedding;
+      return result.data[0].embedding;
     });
   } catch (error) {
     const preview = text.slice(0, 80).replace(/\n/g, ' ');
@@ -284,13 +283,12 @@ export async function generateEmbeddingsBatch(
 
     try {
       const embeddings = await openaiLimiter.schedule(async () => {
-        const { data, response } = await openai.embeddings.create({
+        const result = await openai.embeddings.create({
           model: EMBEDDING_MODEL,
           input: batch,
-        }).withResponse();
+        });
 
-        await updateLimitsFromHeaders(openaiLimiter, response.headers);
-        return data.data.map(entry => entry.embedding);
+        return result.data.map(entry => entry.embedding);
       });
 
       allEmbeddings.push(...embeddings);

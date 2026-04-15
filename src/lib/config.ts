@@ -6,6 +6,8 @@ import { resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fatal, ExitCode } from './errors.js';
+import { openaiLimiter, updateLimitsFromHeaders } from './rate-limiter.js';
+import { initObservability } from './observability.js';
 
 // --- Defaults ---
 
@@ -84,6 +86,17 @@ export function getDefaultConfig(): ConfigFile {
   };
 }
 
+// --- Custom fetch for rate limit header interception ---
+
+// Wraps the global fetch to read OpenAI's rate limit headers on every response.
+// This works below both the OpenAI SDK and the Langfuse wrapper, so header
+// reading survives regardless of how the client is wrapped.
+const openaiHeaderFetch: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  await updateLimitsFromHeaders(openaiLimiter, response.headers);
+  return response;
+};
+
 // --- Load Config ---
 
 export function loadConfig(): LedgerConfig {
@@ -91,6 +104,9 @@ export function loadConfig(): LedgerConfig {
   const dotenvPath = process.env.DOTENV_CONFIG_PATH
     || (existsSync(LEDGER_DOTENV) ? LEDGER_DOTENV : undefined);
   if (dotenvPath) dotenv.config({ path: dotenvPath, quiet: true });
+
+  // Init observability after dotenv loads (Langfuse env vars are now available)
+  initObservability();
 
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     fatal('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY. Run `ledger init` or check your .env file.', ExitCode.GENERAL_ERROR);
@@ -109,7 +125,7 @@ export function loadConfig(): LedgerConfig {
       process.env.SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY,
     ),
-    openai: observeOpenAI(new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 5 })),
+    openai: observeOpenAI(new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 5, fetch: openaiHeaderFetch })),
     cohereApiKey: process.env.COHERE_API_KEY || undefined,
   };
 }

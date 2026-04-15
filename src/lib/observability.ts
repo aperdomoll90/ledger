@@ -12,7 +12,7 @@
 
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { LangfuseSpanProcessor } from '@langfuse/otel';
-import { setLangfuseTracerProvider, startObservation, propagateAttributes } from '@langfuse/tracing';
+import { setLangfuseTracerProvider, startObservation } from '@langfuse/tracing';
 
 // =============================================================================
 // State
@@ -109,16 +109,9 @@ export function startTrace(
 ): IObservationHandle {
   if (!enabled) return NOOP_HANDLE;
 
-  if (options?.tags || options?.metadata) {
-    propagateAttributes({
-      tags: options.tags,
-      metadata: options.metadata,
-    });
-  }
-
   const observation = startObservation(name, {
     input: options?.input,
-    metadata: options?.metadata,
+    metadata: { ...options?.metadata, tags: options?.tags },
   });
 
   return {

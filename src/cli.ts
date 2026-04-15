@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import { createRequire } from 'module';
 import { loadConfig } from './lib/config.js';
-import { initObservability, shutdownObservability } from './lib/observability.js';
+import { shutdownObservability } from './lib/observability.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -264,5 +264,4 @@ program
     await lint({ personal: options.personal ?? false, diff: options.diff ?? false });
   });
 
-initObservability();
-program.parse();
+program.parseAsync().then(() => shutdownObservability());
