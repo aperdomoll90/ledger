@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
+import { observeOpenAI } from '@langfuse/openai';
 import { resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -108,7 +109,7 @@ export function loadConfig(): LedgerConfig {
       process.env.SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY,
     ),
-    openai: new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 5 }),
+    openai: observeOpenAI(new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 5 })),
     cohereApiKey: process.env.COHERE_API_KEY || undefined,
   };
 }
