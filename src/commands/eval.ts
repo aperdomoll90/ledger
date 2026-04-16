@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { LedgerConfig } from '../lib/config.js';
 import type { IClientsProps } from '../lib/documents/classification.js';
 import { searchHybrid } from '../lib/search/ai-search.js';
@@ -29,10 +30,16 @@ export interface IShowOptionsProps {
 // =============================================================================
 
 export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProps): Promise<void> {
+  // Tag every search trace from this eval run with environment=eval and a
+  // shared session ID so the Langfuse dashboard can filter eval traffic from
+  // prod and group all queries in this run under one session.
+  const evalRunUuid = randomUUID();
   const clients: IClientsProps = {
-    supabase:     config.supabase,
-    openai:       config.openai,
-    cohereApiKey: config.cohereApiKey,
+    supabase:                 config.supabase,
+    openai:                   config.openai,
+    cohereApiKey:             config.cohereApiKey,
+    sessionId:                `eval-${evalRunUuid}`,
+    observabilityEnvironment: 'eval',
   };
 
   console.log('\n' + '='.repeat(60));
@@ -141,10 +148,13 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
  *        ledger eval:sweep --thresholds 0.15,0.20,0.25,0.30,0.35,0.40
  */
 export async function sweepThreshold(config: LedgerConfig, options: ISweepOptionsProps): Promise<void> {
+  const sweepRunUuid = randomUUID();
   const clients: IClientsProps = {
-    supabase:     config.supabase,
-    openai:       config.openai,
-    cohereApiKey: config.cohereApiKey,
+    supabase:                 config.supabase,
+    openai:                   config.openai,
+    cohereApiKey:             config.cohereApiKey,
+    sessionId:                `eval-sweep-${sweepRunUuid}`,
+    observabilityEnvironment: 'eval',
   };
 
   const thresholds = options.thresholds

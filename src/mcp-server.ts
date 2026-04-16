@@ -8,12 +8,34 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
+import { observeOpenAI } from '@langfuse/openai';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import type { IClientsProps } from './lib/documents/classification.js';
 import { createDocument, updateDocument, updateDocumentFields, deleteDocument, restoreDocument } from './lib/documents/operations.js';
 import { getDocumentById, listDocuments } from './lib/documents/fetching.js';
 import { searchHybrid, searchByVector, searchByKeyword, retrieveContext } from './lib/search/ai-search.js';
+import { initObservability, shutdownObservability } from './lib/observability.js';
+
+// =============================================================================
+// Observability
+// =============================================================================
+
+// Call before constructing the OpenAI client so observeOpenAI() has a tracer
+// provider to attach to.
+initObservability();
+
+// One session ID per MCP process. MCP stdio transport is one client per
+// process, so process-scoped UUID is the natural session boundary.
+const MCP_SESSION_ID = `mcp-${randomUUID()}`;
+const MCP_ENVIRONMENT = process.env.NODE_ENV ?? 'development';
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    void shutdownObservability().finally(() => process.exit(0));
+  });
+}
 
 // =============================================================================
 // Clients
@@ -34,8 +56,10 @@ if (!openaiKey) {
 
 const clients: IClientsProps = {
   supabase: createClient(supabaseUrl, supabaseKey),
-  openai: new OpenAI({ apiKey: openaiKey }),
+  openai: observeOpenAI(new OpenAI({ apiKey: openaiKey })),
   cohereApiKey: process.env.COHERE_API_KEY || undefined,
+  sessionId: MCP_SESSION_ID,
+  observabilityEnvironment: MCP_ENVIRONMENT,
 };
 
 // =============================================================================
@@ -379,7 +403,7 @@ server.tool(
   },
   async (params) => {
     try {
-      const results = await searchByKeyword(clients.supabase, {
+      const results = await searchByKeyword(clients, {
         query: params.query,
         limit: params.limit,
         domain: params.domain,

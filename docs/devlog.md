@@ -2215,3 +2215,54 @@ Added automated pipeline observability to Ledger using self-hosted Langfuse. Eve
 2. Phase 3: Eval traces
 3. Wire observability into MCP server entry point
 4. Revisit reranker if first-result accuracy plateaus
+
+## Session 43 — 2026-04-15
+
+### Phase 2: Search Pipeline Observability (Langfuse)
+
+**What was done:**
+- Designed, specced, and implemented Phase 2 observability: every search call (vector, keyword, hybrid) now emits structured Langfuse traces with step-level spans
+- Modified `match_documents_hybrid` Postgres function to return a `timing jsonb` sidecar (`vector_ms`, `keyword_ms`, `fusion_ms`) using materialized temp tables and `clock_timestamp()` checkpoints
+- Added `runSearchTrace` (callback-based HOF wrapping `propagateAttributes` + `startActiveObservation`), `recordChildSpan`, and `startSpan` helpers to `observability.ts`
+- Instrumented all three search functions in `ai-search.ts` with trace open/finalize, cache lookup/store spans, retrieve span, rerank span, and three timing-sidecar child spans for hybrid
+- Wired `initObservability()` + `shutdownObservability()` + `observeOpenAI()` into MCP server (closes "MCP not instrumented" known issue)
+- Threaded `sessionId` (cli-uuid, mcp-uuid, eval-uuid) and `observabilityEnvironment` through CLI, MCP, and eval runner
+- Integration test against live Langfuse API verifying trace shape, sessionId, tags, and child spans
+- pgTAP regression test for timing sidecar column
+- Manual verification: CLI traces (7 nested spans), eval traces (144 queries tagged environment=eval)
+
+**Key decisions:**
+- No migration file for `match_documents_hybrid` change. `src/migrations/` folder doesn't reflect v2 schema; architecture doc is source of truth. Logged as known issue for future fix.
+- `propagateAttributes` (callback-based) required for sessionId/tags to be first-class Langfuse fields. `startActiveObservation` required for child span nesting. `provider.register()` required for async context propagation. All three were missing initially; discovered and fixed via integration test failures.
+- Integration test gated on `INTEGRATION_TEST=1` env flag to avoid flakiness when run alongside unit tests that manipulate env vars.
+- `searchByKeyword` signature changed from `(supabase, props)` to `(clients, props)` for observability field access.
+- Timing sidecar stripped from result rows before exposing to callers (`{ timing: _timing, ...rest } => rest`).
+
+**Files changed:**
+- New: `tests/integration/search-traces.test.ts`, `tests/sql/004-hybrid-search-timing.sql`, `docs/manual-test-phase-2.md`, `docs/superpowers/plans/2026-04-15-phase-2-search-observability.md`
+- Modified: `src/lib/observability.ts`, `src/lib/search/ai-search.ts`, `src/mcp-server.ts`, `src/cli.ts`, `src/lib/config.ts`, `src/lib/documents/classification.ts`, `src/commands/eval.ts`, `tests/observability.test.ts`, `docs/ledger-architecture.md`, `docs/ledger-architecture-database-functions.md`
+
+**Architecture docs updated:**
+- `ledger-architecture.md`: Observability section expanded with Phase 2 trace structure, phasing table updated (Phase 1 Done, Phase 2 Planned)
+- `ledger-architecture-database-functions.md`: `match_documents_hybrid` body updated with timing sidecar, temp table restructure, and explanation
+
+**Tests:** 231 TypeScript (11 observability) + 41 pgTAP (4 new) + 1 integration (gated)
+
+### Verified
+- 231 unit tests pass, 3 skipped (2 gated parity + 1 gated integration)
+- Integration test passes against live Langfuse (`INTEGRATION_TEST=1`)
+- CLI trace: 7 nested spans, tags indexed, sessionId working
+- Eval trace: 144 queries tagged environment=eval, grouped by session
+- MCP trace: landed (needs MCP restart for full nesting)
+- Graceful degradation: Ledger fully functional when Langfuse is off
+
+### Known Issues Surfaced
+- `src/migrations/` folder does not reflect v2 schema. `ledger init` broken for fresh installs. Medium severity. Options: rewrite as real migrations, adopt schema-as-code tool, or formalize architecture doc as source of truth.
+- Hookify `permissionDecisionReason` bug: AI sees "Blocked by hook" with no explanation. One-line fix to `core/rule_engine.py` pending (deferred to after Phase 2).
+
+### Next
+1. Commit Phase 2 changes (uncommitted, 14 files + 4 new)
+2. Verify MCP trace after MCP server restart
+3. Hookify `permissionDecisionReason` patch + upstream PR
+4. Phase 3: Eval traces as first-class Langfuse objects (deferred)
+5. Revisit reranker if first-result accuracy plateaus

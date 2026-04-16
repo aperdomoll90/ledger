@@ -12,7 +12,8 @@
 
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { LangfuseSpanProcessor } from '@langfuse/otel';
-import { setLangfuseTracerProvider, startObservation } from '@langfuse/tracing';
+import { setLangfuseTracerProvider, startObservation, startActiveObservation } from '@langfuse/tracing';
+import { propagateAttributes } from '@langfuse/core';
 
 // =============================================================================
 // State
@@ -68,6 +69,11 @@ export function initObservability(): boolean {
     ],
   });
 
+  // Register the provider globally AND install an async context manager so
+  // propagateAttributes() can pass sessionId/tags through to child spans
+  // across `await` boundaries. Without this, propagated attributes never
+  // reach the root trace record in Langfuse.
+  provider.register();
   setLangfuseTracerProvider(provider);
   enabled = true;
   return true;
@@ -142,4 +148,105 @@ export function startSpan(
     update: (data: Record<string, unknown>) => observation.update(data),
     end: () => observation.end(),
   };
+}
+
+// =============================================================================
+// Search-specific helpers (Phase 2)
+// =============================================================================
+
+export type SearchMode = 'vector' | 'keyword' | 'hybrid' | 'hybrid+rerank';
+
+export interface IStartSearchTraceProps {
+  mode: SearchMode;
+  query: string;
+  environment?: string;
+  sessionId?: string;
+  input?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Open a root trace for a search operation.
+ *
+ * Attaches environment (prod/eval/dev), sessionId, tags, input, metadata so
+ * the Langfuse dashboard can slice traces by any of those dimensions.
+ *
+ * Returns a handle with update() and end() methods. The caller is expected to
+ * call .update({ output: {...} }) before .end() to record resultCount, cacheHit,
+ * topResultIds, etc. No-op when observability is disabled.
+ */
+/**
+ * Run a search operation inside an open Langfuse trace.
+ *
+ * Wraps `work` in a `propagateAttributes` context so sessionId, tags, and
+ * environment are attached to the root trace as first-class indexed fields
+ * (not metadata). All spans created inside `work` inherit that context.
+ *
+ * Langfuse's SDK only exposes this via a callback pattern — there is no
+ * imperative "open context, return handle, close later" API. Hence the HOF.
+ *
+ * When observability is disabled, `work` runs with a no-op handle and no
+ * tracing overhead.
+ */
+export async function runSearchTrace<T>(
+  props: IStartSearchTraceProps,
+  work: (trace: IObservationHandle) => Promise<T>,
+): Promise<T> {
+  if (!enabled) return work(NOOP_HANDLE);
+
+  return propagateAttributes(
+    {
+      sessionId: props.sessionId,
+      tags: ['search', props.mode],
+    },
+    async (): Promise<T> => {
+      // startActiveObservation (not startObservation) makes this the ACTIVE
+      // OpenTelemetry span, so any spans created inside `work` nest under it
+      // instead of being emitted as orphan top-level traces.
+      return startActiveObservation('search', async (observation): Promise<T> => {
+        observation.update({
+          input: props.input ?? { query: props.query },
+          metadata: props.metadata,
+          environment: props.environment,
+        });
+        const handle: IObservationHandle = {
+          update: (data: Record<string, unknown>) => observation.update(data),
+          end: () => observation.end(),
+        };
+        return work(handle);
+      });
+    },
+  );
+}
+
+/**
+ * Emit a completed span with pre-computed duration.
+ *
+ * Used for sub-steps whose timing was measured elsewhere (e.g., the three
+ * retrieve.* sub-spans derived from the Postgres timing sidecar). Unlike
+ * startSpan, this does not return a handle — the span opens and closes
+ * immediately, carrying the measured duration as metadata. Timeline position
+ * in the dashboard is approximate; the durationMs and start/end offsets are
+ * exact.
+ *
+ * No-op when observability is disabled.
+ */
+export function recordChildSpan(
+  name: string,
+  startMs: number,
+  endMs: number,
+  attributes?: Record<string, unknown>,
+): void {
+  if (!enabled) return;
+
+  const observation = startObservation(name, {
+    metadata: {
+      ...attributes,
+      startMs,
+      endMs,
+      durationMs: endMs - startMs,
+      synthetic: true,
+    },
+  });
+  observation.end();
 }

@@ -71,4 +71,61 @@ describe('observability', () => {
       await expect(shutdownObservability()).resolves.toBeUndefined();
     });
   });
+
+  describe('runSearchTrace', () => {
+    it('invokes work with a no-op handle when observability is disabled', async () => {
+      delete process.env.LANGFUSE_PUBLIC_KEY;
+      const { initObservability, runSearchTrace } = await import('../src/lib/observability.js');
+      initObservability();
+      const result = await runSearchTrace(
+        { mode: 'hybrid', query: 'test', environment: 'development', sessionId: 'cli-abc-123' },
+        async (trace) => {
+          expect(trace.update).toBeTypeOf('function');
+          expect(trace.end).toBeTypeOf('function');
+          trace.update({ output: { resultCount: 3 } });
+          return 'ok';
+        },
+      );
+      expect(result).toBe('ok');
+    });
+
+    it('accepts every SearchMode value', async () => {
+      delete process.env.LANGFUSE_PUBLIC_KEY;
+      const { initObservability, runSearchTrace } = await import('../src/lib/observability.js');
+      initObservability();
+      for (const mode of ['vector', 'keyword', 'hybrid', 'hybrid+rerank'] as const) {
+        const result = await runSearchTrace({ mode, query: 'q' }, async () => mode);
+        expect(result).toBe(mode);
+      }
+    });
+
+    it('propagates work result as return value', async () => {
+      delete process.env.LANGFUSE_PUBLIC_KEY;
+      const { initObservability, runSearchTrace } = await import('../src/lib/observability.js');
+      initObservability();
+      const result = await runSearchTrace(
+        { mode: 'vector', query: 'q' },
+        async () => ({ rows: 42 }),
+      );
+      expect(result).toEqual({ rows: 42 });
+    });
+  });
+
+  describe('recordChildSpan', () => {
+    it('no-ops when observability is disabled', async () => {
+      delete process.env.LANGFUSE_PUBLIC_KEY;
+      const { initObservability, recordChildSpan } = await import('../src/lib/observability.js');
+      initObservability();
+      expect(() =>
+        recordChildSpan('retrieve.vector', 100, 180, { rows: 10 }),
+      ).not.toThrow();
+    });
+
+    it('handles zero-duration spans without error', async () => {
+      delete process.env.LANGFUSE_PUBLIC_KEY;
+      const { initObservability, recordChildSpan } = await import('../src/lib/observability.js');
+      initObservability();
+      expect(() => recordChildSpan('retrieve.fusion', 2000, 2000)).not.toThrow();
+    });
+  });
 });
