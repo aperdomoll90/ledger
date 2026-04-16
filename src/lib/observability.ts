@@ -14,6 +14,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { LangfuseSpanProcessor } from '@langfuse/otel';
 import { setLangfuseTracerProvider, startObservation, startActiveObservation } from '@langfuse/tracing';
 import { propagateAttributes } from '@langfuse/core';
+import { trace as otelTrace, type Span as OTelSpan } from '@opentelemetry/api';
 
 // =============================================================================
 // State
@@ -130,6 +131,10 @@ export function startTrace(
  * Start a span (child observation within a trace).
  * Use for pipeline steps like chunking, enrichment, embedding, DB write.
  *
+ * Uses the OTel tracer so spans automatically nest under the active context
+ * set by startActiveObservation in runSearchTrace. Langfuse's startObservation
+ * does NOT read OTel context, so using it here would create orphaned traces.
+ *
  * Returns a handle with update() and end() methods.
  * When observability is disabled, returns a no-op handle.
  */
@@ -139,14 +144,26 @@ export function startSpan(
 ): IObservationHandle {
   if (!enabled) return NOOP_HANDLE;
 
-  const observation = startObservation(name, {
-    input: options?.input,
-    metadata: options?.metadata,
-  });
+  const tracer = otelTrace.getTracer('langfuse-sdk');
+  const span: OTelSpan = tracer.startSpan(name);
+
+  if (options?.input) {
+    span.setAttribute('langfuse.span.input', JSON.stringify(options.input));
+  }
+  if (options?.metadata) {
+    span.setAttribute('langfuse.span.metadata', JSON.stringify(options.metadata));
+  }
 
   return {
-    update: (data: Record<string, unknown>) => observation.update(data),
-    end: () => observation.end(),
+    update: (data: Record<string, unknown>) => {
+      for (const [key, value] of Object.entries(data)) {
+        span.setAttribute(
+          `langfuse.span.${key}`,
+          typeof value === 'string' ? value : JSON.stringify(value),
+        );
+      }
+    },
+    end: () => span.end(),
   };
 }
 
@@ -204,10 +221,14 @@ export async function runSearchTrace<T>(
       // OpenTelemetry span, so any spans created inside `work` nest under it
       // instead of being emitted as orphan top-level traces.
       return startActiveObservation('search', async (observation): Promise<T> => {
+        // sessionId and tags are accepted at runtime but not in LangfuseSpanAttributes.
+        // propagateAttributes sets them in OTel context (metadata), but observation.update
+        // is needed to promote them to first-class indexed fields on the trace record.
         observation.update({
           input: props.input ?? { query: props.query },
           metadata: props.metadata,
           environment: props.environment,
+          ...({ sessionId: props.sessionId, tags: ['search', props.mode] } as Record<string, unknown>),
         });
         const handle: IObservationHandle = {
           update: (data: Record<string, unknown>) => observation.update(data),
@@ -224,10 +245,12 @@ export async function runSearchTrace<T>(
  *
  * Used for sub-steps whose timing was measured elsewhere (e.g., the three
  * retrieve.* sub-spans derived from the Postgres timing sidecar). Unlike
- * startSpan, this does not return a handle — the span opens and closes
- * immediately, carrying the measured duration as metadata. Timeline position
- * in the dashboard is approximate; the durationMs and start/end offsets are
- * exact.
+ * startSpan, this does not return a handle. The span opens and closes
+ * immediately, carrying the measured duration as attributes.
+ *
+ * Uses OTel tracer so spans nest under the active context (same reason as
+ * startSpan). The startTime parameter backdates the span to align with the
+ * measured window.
  *
  * No-op when observability is disabled.
  */
@@ -239,14 +262,16 @@ export function recordChildSpan(
 ): void {
   if (!enabled) return;
 
-  const observation = startObservation(name, {
-    metadata: {
-      ...attributes,
-      startMs,
-      endMs,
-      durationMs: endMs - startMs,
-      synthetic: true,
-    },
-  });
-  observation.end();
+  const tracer = otelTrace.getTracer('langfuse-sdk');
+  const span: OTelSpan = tracer.startSpan(name, { startTime: startMs });
+
+  span.setAttribute('langfuse.span.metadata', JSON.stringify({
+    ...attributes,
+    startMs,
+    endMs,
+    durationMs: endMs - startMs,
+    synthetic: true,
+  }));
+
+  span.end(endMs);
 }
