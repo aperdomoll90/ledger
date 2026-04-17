@@ -12,6 +12,7 @@ import {
   SEMANTIC_CACHE_MODEL_ID,
   SEMANTIC_CACHE_THRESHOLD,
 } from './semantic-cache.js';
+import { runSearchTrace, startSpan, recordChildSpan, withActiveSpan } from '../observability.js';
 
 // =============================================================================
 // Search result interfaces
@@ -157,6 +158,19 @@ export async function searchByVector(
   props: IVectorSearchProps,
 ): Promise<ISearchResultProps[]> {
   const startTime = Date.now();
+
+  return runSearchTrace({
+    mode: 'vector',
+    query: props.query,
+    environment: clients.observabilityEnvironment,
+    sessionId: clients.sessionId,
+    input: {
+      query: props.query,
+      filters: { domain: props.domain, project: props.project, document_type: props.document_type },
+    },
+    metadata: { threshold: props.threshold ?? 0.38, limit: props.limit ?? 10 },
+  }, async (trace) => {
+
   const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
   const embeddingString = toVectorString(queryEmbedding);
 
@@ -169,6 +183,7 @@ export async function searchByVector(
     project: props.project,
   });
 
+  const cacheSpan = startSpan('semantic-cache-lookup');
   const { data: cachedResults } = await clients.supabase.rpc('semantic_cache_lookup', {
     p_query_embedding: embeddingString,
     p_search_mode: 'vector',
@@ -176,21 +191,30 @@ export async function searchByVector(
     p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
     p_similarity_threshold: SEMANTIC_CACHE_THRESHOLD,
   });
+  const cacheHit = !!(cachedResults && (cachedResults as ISearchResultProps[]).length > 0);
+  cacheSpan.update({ output: { hit: cacheHit } });
+  cacheSpan.end();
 
-  if (cachedResults) {
+  if (cacheHit) {
     const results = cachedResults as ISearchResultProps[];
-    if (results.length > 0) {
-      logSearchEvaluation(clients.supabase, {
-        query: props.query,
-        searchMode: 'vector',
-        results,
-        responseTimeMs: Date.now() - startTime,
-      });
-      return results;
-    }
+    trace.update({
+      output: {
+        resultCount: results.length,
+        topResultIds: results.slice(0, 3).map(result => result.id),
+        cacheHit: true,
+      },
+    });
+    logSearchEvaluation(clients.supabase, {
+      query: props.query,
+      searchMode: 'vector',
+      results,
+      responseTimeMs: Date.now() - startTime,
+    });
+    return results;
   }
 
   // Cache miss: run full search pipeline
+  const retrieveSpan = startSpan('retrieve');
   const { data, error } = await clients.supabase.rpc('match_documents', {
     q_emb: embeddingString,
     p_threshold: props.threshold ?? 0.38,
@@ -200,12 +224,20 @@ export async function searchByVector(
     p_project: props.project ?? null,
   });
 
-  if (error) throw new Error(`Vector search failed for "${props.query}": ${error.message}`);
+  if (error) {
+    retrieveSpan.update({ output: { error: error.message } });
+    retrieveSpan.end();
+    trace.update({ output: { error: error.message } });
+    throw new Error(`Vector search failed for "${props.query}": ${error.message}`);
+  }
   const results = (data ?? []) as ISearchResultProps[];
+  retrieveSpan.update({ output: { rowCount: results.length } });
+  retrieveSpan.end();
 
   // Store in semantic cache (non-blocking)
   if (results.length > 0) {
     const sourceDocIds = extractSourceDocIds(results);
+    const storeSpan = startSpan('semantic-cache-store');
     Promise.resolve(clients.supabase.rpc('semantic_cache_store', {
       p_query_text: props.query,
       p_query_embedding: embeddingString,
@@ -214,10 +246,22 @@ export async function searchByVector(
       p_cached_results: results,
       p_source_doc_ids: sourceDocIds,
       p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
-    })).then(() => {}).catch((cacheStoreError: { message?: string }) => {
+    })).then(() => {
+      storeSpan.end();
+    }).catch((cacheStoreError: { message?: string }) => {
+      storeSpan.update({ output: { error: cacheStoreError.message ?? 'unknown' } });
+      storeSpan.end();
       process.stderr.write(`[ledger] semantic cache store failed: ${cacheStoreError.message ?? 'unknown'}\n`);
     });
   }
+
+  trace.update({
+    output: {
+      resultCount: results.length,
+      topResultIds: results.slice(0, 3).map(result => result.id),
+      cacheHit: false,
+    },
+  });
 
   logSearchEvaluation(clients.supabase, {
     query: props.query,
@@ -227,6 +271,7 @@ export async function searchByVector(
   });
 
   return results;
+  });
 }
 
 /**
@@ -236,11 +281,24 @@ export async function searchByVector(
  * to match words directly. Good for code identifiers, proper nouns, error messages.
  */
 export async function searchByKeyword(
-  supabase: ISupabaseClientProps,
+  clients: IClientsProps,
   props: IKeywordSearchProps,
 ): Promise<ISearchResultProps[]> {
   const startTime = Date.now();
-  const { data, error } = await supabase.rpc('match_documents_keyword', {
+
+  return runSearchTrace({
+    mode: 'keyword',
+    query: props.query,
+    environment: clients.observabilityEnvironment,
+    sessionId: clients.sessionId,
+    input: {
+      query: props.query,
+      filters: { domain: props.domain, project: props.project, document_type: props.document_type },
+    },
+    metadata: { limit: props.limit ?? 10 },
+  }, async (trace) => {
+
+  const { data, error } = await clients.supabase.rpc('match_documents_keyword', {
     p_query: props.query,
     p_max_results: props.limit ?? 10,
     p_domain: props.domain ?? null,
@@ -248,10 +306,21 @@ export async function searchByKeyword(
     p_project: props.project ?? null,
   });
 
-  if (error) throw new Error(`Keyword search failed for "${props.query}": ${error.message}`);
+  if (error) {
+    trace.update({ output: { error: error.message } });
+    throw new Error(`Keyword search failed for "${props.query}": ${error.message}`);
+  }
   const results = (data ?? []) as ISearchResultProps[];
 
-  logSearchEvaluation(supabase, {
+  trace.update({
+    output: {
+      resultCount: results.length,
+      topResultIds: results.slice(0, 3).map(result => result.id),
+      cacheHit: false,
+    },
+  });
+
+  logSearchEvaluation(clients.supabase, {
     query: props.query,
     searchMode: 'keyword',
     results,
@@ -259,6 +328,7 @@ export async function searchByKeyword(
   });
 
   return results;
+  });
 }
 
 /**
@@ -277,14 +347,32 @@ export async function searchHybrid(
   props: IHybridSearchProps,
 ): Promise<ISearchResultProps[]> {
   const startTime = Date.now();
-  const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
-  const embeddingString = toVectorString(queryEmbedding);
 
   // When reranking, fetch more candidates so the reranker has a bigger pool.
   // The reranker will select the best N from this larger set.
   const useReranker = props.reranker === 'cohere' && clients.cohereApiKey;
   const desiredLimit = props.limit ?? 10;
   const requestLimit = useReranker ? desiredLimit * 2 : desiredLimit;
+
+  return runSearchTrace({
+    mode: useReranker ? 'hybrid+rerank' : 'hybrid',
+    query: props.query,
+    environment: clients.observabilityEnvironment,
+    sessionId: clients.sessionId,
+    input: {
+      query: props.query,
+      filters: { domain: props.domain, project: props.project, document_type: props.document_type },
+    },
+    metadata: {
+      threshold: props.threshold ?? 0.38,
+      limit: desiredLimit,
+      rerankerEnabled: !!useReranker,
+      reciprocalRankFusionK: props.reciprocalRankFusionK ?? 60,
+    },
+  }, async (trace) => {
+
+  const queryEmbedding = await getOrCacheQueryEmbedding(clients, props.query);
+  const embeddingString = toVectorString(queryEmbedding);
 
   // Semantic cache lookup (layer 2)
   // Skip cache when reranker is enabled (reranker produces different ordering)
@@ -297,6 +385,7 @@ export async function searchHybrid(
   });
 
   if (!useReranker) {
+    const cacheSpan = startSpan('semantic-cache-lookup');
     const { data: cachedResults } = await clients.supabase.rpc('semantic_cache_lookup', {
       p_query_embedding: embeddingString,
       p_search_mode: 'hybrid',
@@ -304,22 +393,32 @@ export async function searchHybrid(
       p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
       p_similarity_threshold: SEMANTIC_CACHE_THRESHOLD,
     });
+    const cacheHit = !!(cachedResults && (cachedResults as ISearchResultProps[]).length > 0);
+    cacheSpan.update({ output: { hit: cacheHit } });
+    cacheSpan.end();
 
-    if (cachedResults) {
-      const results = cachedResults as ISearchResultProps[];
-      if (results.length > 0) {
-        logSearchEvaluation(clients.supabase, {
-          query: props.query,
-          searchMode: 'hybrid',
-          results,
-          responseTimeMs: Date.now() - startTime,
-        });
-        return results;
-      }
+    if (cacheHit) {
+      const cachedRows = cachedResults as ISearchResultProps[];
+      trace.update({
+        output: {
+          resultCount: cachedRows.length,
+          topResultIds: cachedRows.slice(0, 3).map(result => result.id),
+          cacheHit: true,
+        },
+      });
+      logSearchEvaluation(clients.supabase, {
+        query: props.query,
+        searchMode: 'hybrid',
+        results: cachedRows,
+        responseTimeMs: Date.now() - startTime,
+      });
+      return cachedRows;
     }
   }
 
   // Cache miss: run full search pipeline
+  const retrieveSpan = startSpan('retrieve');
+  const retrieveStart = Date.now();
   const { data, error } = await clients.supabase.rpc('match_documents_hybrid', {
     q_emb: embeddingString,
     q_text: props.query,
@@ -331,21 +430,54 @@ export async function searchHybrid(
     p_rrf_k: props.reciprocalRankFusionK ?? 60,
   });
 
-  if (error) throw new Error(`Hybrid search failed for "${props.query}": ${error.message}`);
-  let results = (data ?? []) as ISearchResultProps[];
+  if (error) {
+    retrieveSpan.update({ output: { error: error.message } });
+    retrieveSpan.end();
+    trace.update({ output: { error: error.message } });
+    throw new Error(`Hybrid search failed for "${props.query}": ${error.message}`);
+  }
+
+  type HybridRow = ISearchResultProps & {
+    timing?: { vector_ms: number; keyword_ms: number; fusion_ms: number };
+  };
+  const rows = (data ?? []) as HybridRow[];
+  const timing = rows[0]?.timing;
+  retrieveSpan.update({ output: { rowCount: rows.length, timing } });
+  retrieveSpan.end();
+
+  // Emit three child spans from the Postgres timing sidecar.
+  // Spans are backdated from retrieveStart using the measured ms deltas.
+  if (timing) {
+    let cursor = retrieveStart;
+    recordChildSpan('retrieve.vector', cursor, cursor + timing.vector_ms, { durationMs: timing.vector_ms });
+    cursor += timing.vector_ms;
+    recordChildSpan('retrieve.keyword', cursor, cursor + timing.keyword_ms, { durationMs: timing.keyword_ms });
+    cursor += timing.keyword_ms;
+    recordChildSpan('retrieve.fusion', cursor, cursor + timing.fusion_ms, { durationMs: timing.fusion_ms });
+  }
+
+  // Strip timing from rows before exposing to callers (internal sidecar only).
+  let results: ISearchResultProps[] = rows.map(({ timing: _timing, ...rest }) => rest);
 
   // Rerank: send candidates to Cohere cross-encoder for re-scoring.
   // If reranking fails, results are returned unchanged (graceful degradation).
   if (useReranker && results.length > 0) {
-    results = await rerankResults(props.query, results, {
-      apiKey: clients.cohereApiKey!,
-      topN: desiredLimit,
+    const rerankSpan = startSpan('rerank');
+    const inputCount = results.length;
+    results = await withActiveSpan(rerankSpan, async () => {
+      return rerankResults(props.query, results, {
+        apiKey: clients.cohereApiKey!,
+        topN: desiredLimit,
+      });
     });
+    rerankSpan.update({ output: { inputCount, outputCount: results.length } });
+    rerankSpan.end();
   }
 
   // Store in semantic cache (non-blocking, skip if reranker was used)
   if (results.length > 0 && !useReranker) {
     const sourceDocIds = extractSourceDocIds(results);
+    const storeSpan = startSpan('semantic-cache-store');
     Promise.resolve(clients.supabase.rpc('semantic_cache_store', {
       p_query_text: props.query,
       p_query_embedding: embeddingString,
@@ -354,10 +486,22 @@ export async function searchHybrid(
       p_cached_results: results,
       p_source_doc_ids: sourceDocIds,
       p_embedding_model_id: SEMANTIC_CACHE_MODEL_ID,
-    })).then(() => {}).catch((cacheStoreError: { message?: string }) => {
+    })).then(() => {
+      storeSpan.end();
+    }).catch((cacheStoreError: { message?: string }) => {
+      storeSpan.update({ output: { error: cacheStoreError.message ?? 'unknown' } });
+      storeSpan.end();
       process.stderr.write(`[ledger] semantic cache store failed: ${cacheStoreError.message ?? 'unknown'}\n`);
     });
   }
+
+  trace.update({
+    output: {
+      resultCount: results.length,
+      topResultIds: results.slice(0, 3).map(result => result.id),
+      cacheHit: false,
+    },
+  });
 
   logSearchEvaluation(clients.supabase, {
     query: props.query,
@@ -367,6 +511,7 @@ export async function searchHybrid(
   });
 
   return results;
+  });
 }
 
 /**

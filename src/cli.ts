@@ -4,8 +4,15 @@
 
 import { Command } from 'commander';
 import { createRequire } from 'module';
+import { randomUUID } from 'node:crypto';
 import { loadConfig } from './lib/config.js';
 import { shutdownObservability } from './lib/observability.js';
+
+// Per-invocation session ID so all searches from this CLI run group together
+// in the Langfuse dashboard.
+const CLI_SESSION_ID = `cli-${randomUUID()}`;
+const CLI_ENVIRONMENT = process.env.NODE_ENV ?? 'development';
+const CLI_CONTEXT = { sessionId: CLI_SESSION_ID, observabilityEnvironment: CLI_ENVIRONMENT };
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -64,7 +71,7 @@ program
   .option('-s, --status <status>', 'status: idea, planning, active, done')
   .option('--protection <level>', 'protection: open, guarded, protected, immutable')
   .action(async (options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await addDocument(config, {
       content: options.content,
       name: options.name,
@@ -85,7 +92,7 @@ program
   .option('-t, --type <type>', 'filter by document type')
   .option('-p, --project <project>', 'filter by project name')
   .action(async (options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await list(config, {
       limit: parseInt(options.limit, 10),
       type: options.type,
@@ -97,7 +104,7 @@ program
   .command('get <name>')
   .description('Fetch a document by exact name and print its content')
   .action(async (name) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await get(config, name);
   });
 
@@ -107,7 +114,7 @@ program
   .option('-t, --type <type>', 'filter by document type')
   .option('-p, --project <project>', 'filter by project name')
   .action(async (queryParts, options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await show(config, queryParts.join(' '), { type: options.type, project: options.project });
   });
 
@@ -116,7 +123,7 @@ program
   .description('Download a document to a file')
   .option('-o, --output <path>', 'output directory (default: current directory)')
   .action(async (queryParts, options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await exportDocument(config, queryParts.join(' '), options.output);
   });
 
@@ -124,7 +131,7 @@ program
   .command('push <file>')
   .description('Upload a local file to Ledger')
   .action(async (file) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await push(config, file);
   });
 
@@ -133,7 +140,7 @@ program
   .description('Update a document by ID')
   .requiredOption('-c, --content <content>', 'new content')
   .action(async (documentId, options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await update(config, parseInt(documentId, 10), options.content);
   });
 
@@ -141,7 +148,7 @@ program
   .command('delete <id>')
   .description('Soft-delete a document by ID')
   .action(async (documentId) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await removeDocument(config, parseInt(documentId, 10));
   });
 
@@ -152,7 +159,7 @@ program
   .option('-p, --project <name>', 'project name')
   .option('--domain <domain>', 'domain: system, persona, workspace, project, general')
   .action(async (documentId, options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await tag(config, parseInt(documentId, 10), {
       description: options.description,
       project: options.project,
@@ -169,7 +176,7 @@ program
   .description('Run search quality evaluation against golden dataset')
   .option('--dry-run', 'print report without saving to database')
   .action(async (options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await evalSearch(config, { dryRun: options.dryRun ?? false });
   });
 
@@ -178,7 +185,7 @@ program
   .description('Test multiple similarity thresholds to find optimal value')
   .option('--thresholds <values>', 'comma-separated thresholds to test', '0.15,0.20,0.25,0.30,0.35,0.40')
   .action(async (options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await sweepThreshold(config, { thresholds: options.thresholds });
   });
 
@@ -187,7 +194,7 @@ program
   .description('Inspect a saved eval run — summary metrics and missed queries with doc names')
   .option('--full', 'also dump per-query results as JSON', false)
   .action(async (runIdArg, options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     const runId  = parseInt(runIdArg, 10);
     if (isNaN(runId)) {
       process.stderr.write(`Invalid run id: ${runIdArg}\n`);
@@ -201,7 +208,7 @@ program
   .description('Resumable rejudging walkthrough — grade top-10 search results per query using TREC 4-level scale')
   .option('--query <id>', 'start at a specific golden query id', (value: string) => parseInt(value, 10))
   .action(async (options) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await evalJudge(config, { query: options.query });
   });
 
@@ -213,7 +220,7 @@ program
   .command('check')
   .description('Compare local files vs Ledger, report sync status')
   .action(async () => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await check(config);
   });
 
@@ -232,7 +239,7 @@ program
       disableBackupCron();
       return;
     }
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await backup(config, { quiet: options.quiet ?? false });
   });
 
@@ -240,7 +247,7 @@ program
   .command('restore <file>')
   .description('Restore documents from a backup JSON file')
   .action(async (file) => {
-    const config = loadConfig();
+    const config = loadConfig(CLI_CONTEXT);
     await restore(config, file);
   });
 

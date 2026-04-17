@@ -398,6 +398,8 @@ $$;
 
 ### match_documents_hybrid
 
+> **Phase 2 update (migration 010):** adds a `timing jsonb` column to every result row carrying `{ vector_ms, keyword_ms, fusion_ms }`. Internal structure changes from a single `RETURN QUERY WITH ...` into materialized sub-steps so `clock_timestamp()` can measure each phase independently. Functional behavior (matching, scoring, ordering) is unchanged. Callers that ignore the `timing` column continue working with no changes.
+
 ```sql
 CREATE OR REPLACE FUNCTION public.match_documents_hybrid(
   q_emb vector, q_text text,
@@ -408,14 +410,25 @@ CREATE OR REPLACE FUNCTION public.match_documents_hybrid(
   id bigint, content text, name text, domain text, document_type text,
   project text, protection text, description text, agent text, status text,
   file_path text, skill_ref text, owner_type text, owner_id text,
-  is_auto_load boolean, content_hash text, score double precision
+  is_auto_load boolean, content_hash text, score double precision,
+  timing jsonb
 ) LANGUAGE plpgsql AS $$
+DECLARE
+  v_vector_start timestamptz;
+  v_vector_end   timestamptz;
+  v_keyword_end  timestamptz;
 BEGIN
-  RETURN QUERY
-  WITH vector_ranked AS (
-    SELECT DISTINCT ON (n.id)
-      n.id AS document_id,
-      (c.embedding <=> q_emb) AS distance
+  CREATE TEMP TABLE IF NOT EXISTS _phase2_vector (document_id bigint, rank integer) ON COMMIT DROP;
+  CREATE TEMP TABLE IF NOT EXISTS _phase2_keyword (document_id bigint, rank integer) ON COMMIT DROP;
+  TRUNCATE _phase2_vector;
+  TRUNCATE _phase2_keyword;
+
+  v_vector_start := clock_timestamp();
+
+  INSERT INTO _phase2_vector (document_id, rank)
+  SELECT vr.document_id, ROW_NUMBER() OVER (ORDER BY vr.distance)::integer
+  FROM (
+    SELECT DISTINCT ON (n.id) n.id AS document_id, (c.embedding <=> q_emb) AS distance
     FROM document_chunks c
     JOIN documents n ON n.id = c.document_id
     WHERE n.deleted_at IS NULL
@@ -424,33 +437,31 @@ BEGIN
       AND (p_document_type IS NULL OR n.document_type = p_document_type)
       AND (p_project IS NULL OR n.project = p_project)
     ORDER BY n.id, (c.embedding <=> q_emb)
-  ),
-  vector_results AS (
-    SELECT
-      vr.document_id,
-      ROW_NUMBER() OVER (ORDER BY vr.distance) AS rank
-    FROM vector_ranked vr
-    ORDER BY vr.distance
-    LIMIT p_max_results * 2
-  ),
-  keyword_results AS (
-    SELECT
-      n.id AS document_id,
-      ROW_NUMBER() OVER (ORDER BY ts_rank(n.search_vector, websearch_to_tsquery('english', q_text)) DESC) AS rank
-    FROM documents n
-    WHERE n.deleted_at IS NULL
-      AND n.search_vector @@ websearch_to_tsquery('english', q_text)
-      AND (p_domain IS NULL OR n.domain = p_domain)
-      AND (p_document_type IS NULL OR n.document_type = p_document_type)
-      AND (p_project IS NULL OR n.project = p_project)
-    LIMIT p_max_results * 2
-  ),
-  fused AS (
+  ) vr
+  ORDER BY vr.distance
+  LIMIT p_max_results * 2;
+
+  v_vector_end := clock_timestamp();
+
+  INSERT INTO _phase2_keyword (document_id, rank)
+  SELECT n.id, ROW_NUMBER() OVER (ORDER BY ts_rank(n.search_vector, websearch_to_tsquery('english', q_text)) DESC)::integer
+  FROM documents n
+  WHERE n.deleted_at IS NULL
+    AND n.search_vector @@ websearch_to_tsquery('english', q_text)
+    AND (p_domain IS NULL OR n.domain = p_domain)
+    AND (p_document_type IS NULL OR n.document_type = p_document_type)
+    AND (p_project IS NULL OR n.project = p_project)
+  LIMIT p_max_results * 2;
+
+  v_keyword_end := clock_timestamp();
+
+  RETURN QUERY
+  WITH fused AS (
     SELECT
       COALESCE(v.document_id, k.document_id) AS document_id,
       COALESCE(1.0 / (p_rrf_k + v.rank), 0) + COALESCE(1.0 / (p_rrf_k + k.rank), 0) AS rrf_score
-    FROM vector_results v
-    FULL OUTER JOIN keyword_results k ON v.document_id = k.document_id
+    FROM _phase2_vector v
+    FULL OUTER JOIN _phase2_keyword k ON v.document_id = k.document_id
     ORDER BY rrf_score DESC
     LIMIT p_max_results
   )
@@ -459,13 +470,20 @@ BEGIN
     n.project, n.protection, n.description, n.agent, n.status,
     n.file_path, n.skill_ref, n.owner_type, n.owner_id,
     n.is_auto_load, n.content_hash,
-    f.rrf_score::float AS score
+    f.rrf_score::float AS score,
+    jsonb_build_object(
+      'vector_ms',  round(extract(epoch FROM (v_vector_end  - v_vector_start)) * 1000)::int,
+      'keyword_ms', round(extract(epoch FROM (v_keyword_end - v_vector_end  )) * 1000)::int,
+      'fusion_ms',  round(extract(epoch FROM (clock_timestamp() - v_keyword_end)) * 1000)::int
+    ) AS timing
   FROM fused f
   JOIN documents n ON n.id = f.document_id
   ORDER BY f.rrf_score DESC;
 END;
 $$;
 ```
+
+**Why the restructure:** the previous single `RETURN QUERY WITH ...` form let the planner inline and reorder CTEs, which meant a `clock_timestamp()` inside one CTE wouldn't reliably reflect that step's real cost. Materializing each phase into a temp table forces ordered execution and gives accurate per-phase timing. Temp tables use `ON COMMIT DROP` so they don't leak between calls.
 
 ### retrieve_context
 

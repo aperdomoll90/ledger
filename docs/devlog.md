@@ -2166,3 +2166,152 @@ Full audit of all Ledger docs (Ledger DB + local files) against actual codebase 
 ### Next
 1. Build observability system for pipeline performance measurement
 2. Revisit reranker if first-result accuracy plateaus
+
+---
+
+## Session 42 -- 2026-04-14
+
+### Pipeline Observability with Langfuse (Phase 1: Ingestion)
+
+Added automated pipeline observability to Ledger using self-hosted Langfuse. Every document ingestion now produces a trace with step-level timing, token usage, and cost.
+
+**Infrastructure:**
+- Installed Docker Engine on the machine (first time)
+- Self-hosted Langfuse stack: 6 Docker containers (web, worker, Postgres, ClickHouse, Redis, MinIO)
+- Single exposed port: 9100. All other services internal to Docker network.
+- Docker Compose config at `docker/langfuse/docker-compose.yml`
+
+**SDK integration (4 packages):**
+- `@langfuse/tracing`, `@langfuse/openai`, `@langfuse/otel`, `@opentelemetry/sdk-trace-node`
+- OpenAI client wrapped with `observeOpenAI()` in `config.ts` for auto-capture of all LLM/embedding calls
+- Manual spans for non-API steps (chunking, DB write) via `src/lib/observability.ts`
+- Graceful degradation: Ledger works identically when Langfuse env vars are absent
+
+**Key implementation decisions:**
+- Moved `initObservability()` into `loadConfig()` (after `dotenv.config()`) to ensure env vars are loaded
+- Replaced `.withResponse()` on OpenAI embedding calls with custom `fetch` that intercepts rate limit headers at the HTTP level. This keeps adaptive header reading working through the Langfuse proxy and extends it to all OpenAI calls (not just embeddings).
+- Used `program.parseAsync().then(() => shutdownObservability())` for reliable trace flushing on normal exit
+- `CLICKHOUSE_CLUSTER_ENABLED=false` required for single-node ClickHouse (Langfuse v3 defaults to replicated tables)
+
+**Files changed:**
+- New: `docker/langfuse/docker-compose.yml`, `docker/langfuse/.env.example`, `src/lib/observability.ts`, `tests/observability.test.ts`
+- Modified: `src/lib/config.ts`, `src/lib/documents/operations.ts`, `src/lib/search/embeddings.ts`, `src/lib/documents/classification.ts`, `src/cli.ts`, `docs/ledger-architecture.md`
+
+**Architecture docs updated:**
+- `ledger-architecture.md` (local + Ledger #137): added Observability section with distributed tracing concepts, phasing table, repo structure update
+
+**Design + plan docs:**
+- `docs/superpowers/specs/2026-04-14-observability-langfuse-design.md`
+- `docs/superpowers/plans/2026-04-14-observability-langfuse.md`
+
+### Verified
+- 226 tests pass (6 new observability tests)
+- End-to-end trace visible in Langfuse dashboard with: chunking span, context-enrichment span (with nested OpenAI.chat generations), batch-embedding span (with nested OpenAI.embeddings generation), db-write span
+- Token counts and cost auto-calculated per generation
+- Build succeeds
+
+### Next
+1. Phase 2: Search traces (query embedding, cache, vector/keyword, RRF)
+2. Phase 3: Eval traces
+3. Wire observability into MCP server entry point
+4. Revisit reranker if first-result accuracy plateaus
+
+## Session 43 — 2026-04-15
+
+### Phase 2: Search Pipeline Observability (Langfuse)
+
+**What was done:**
+- Designed, specced, and implemented Phase 2 observability: every search call (vector, keyword, hybrid) now emits structured Langfuse traces with step-level spans
+- Modified `match_documents_hybrid` Postgres function to return a `timing jsonb` sidecar (`vector_ms`, `keyword_ms`, `fusion_ms`) using materialized temp tables and `clock_timestamp()` checkpoints
+- Added `runSearchTrace` (callback-based HOF wrapping `propagateAttributes` + `startActiveObservation`), `recordChildSpan`, and `startSpan` helpers to `observability.ts`
+- Instrumented all three search functions in `ai-search.ts` with trace open/finalize, cache lookup/store spans, retrieve span, rerank span, and three timing-sidecar child spans for hybrid
+- Wired `initObservability()` + `shutdownObservability()` + `observeOpenAI()` into MCP server (closes "MCP not instrumented" known issue)
+- Threaded `sessionId` (cli-uuid, mcp-uuid, eval-uuid) and `observabilityEnvironment` through CLI, MCP, and eval runner
+- Integration test against live Langfuse API verifying trace shape, sessionId, tags, and child spans
+- pgTAP regression test for timing sidecar column
+- Manual verification: CLI traces (7 nested spans), eval traces (144 queries tagged environment=eval)
+
+**Key decisions:**
+- No migration file for `match_documents_hybrid` change. `src/migrations/` folder doesn't reflect v2 schema; architecture doc is source of truth. Logged as known issue for future fix.
+- `propagateAttributes` (callback-based) required for sessionId/tags to be first-class Langfuse fields. `startActiveObservation` required for child span nesting. `provider.register()` required for async context propagation. All three were missing initially; discovered and fixed via integration test failures.
+- Integration test gated on `INTEGRATION_TEST=1` env flag to avoid flakiness when run alongside unit tests that manipulate env vars.
+- `searchByKeyword` signature changed from `(supabase, props)` to `(clients, props)` for observability field access.
+- Timing sidecar stripped from result rows before exposing to callers (`{ timing: _timing, ...rest } => rest`).
+
+**Files changed:**
+- New: `tests/integration/search-traces.test.ts`, `tests/sql/004-hybrid-search-timing.sql`, `docs/manual-test-phase-2.md`, `docs/superpowers/plans/2026-04-15-phase-2-search-observability.md`
+- Modified: `src/lib/observability.ts`, `src/lib/search/ai-search.ts`, `src/mcp-server.ts`, `src/cli.ts`, `src/lib/config.ts`, `src/lib/documents/classification.ts`, `src/commands/eval.ts`, `tests/observability.test.ts`, `docs/ledger-architecture.md`, `docs/ledger-architecture-database-functions.md`
+
+**Architecture docs updated:**
+- `ledger-architecture.md`: Observability section expanded with Phase 2 trace structure, phasing table updated (Phase 1 Done, Phase 2 Planned)
+- `ledger-architecture-database-functions.md`: `match_documents_hybrid` body updated with timing sidecar, temp table restructure, and explanation
+
+**Tests:** 231 TypeScript (11 observability) + 41 pgTAP (4 new) + 1 integration (gated)
+
+### Verified
+- 231 unit tests pass, 3 skipped (2 gated parity + 1 gated integration)
+- Integration test passes against live Langfuse (`INTEGRATION_TEST=1`)
+- CLI trace: 7 nested spans, tags indexed, sessionId working
+- Eval trace: 144 queries tagged environment=eval, grouped by session
+- MCP trace: landed (needs MCP restart for full nesting)
+- Graceful degradation: Ledger fully functional when Langfuse is off
+
+### Known Issues Surfaced
+- `src/migrations/` folder does not reflect v2 schema. `ledger init` broken for fresh installs. Medium severity. Options: rewrite as real migrations, adopt schema-as-code tool, or formalize architecture doc as source of truth.
+- Hookify `permissionDecisionReason` bug: AI sees "Blocked by hook" with no explanation. One-line fix to `core/rule_engine.py` pending (deferred to after Phase 2).
+
+### Next
+1. Commit Phase 2 changes (uncommitted, 14 files + 4 new)
+2. Verify MCP trace after MCP server restart
+3. Hookify `permissionDecisionReason` patch + upstream PR
+4. Phase 3: Eval traces as first-class Langfuse objects (deferred)
+5. Revisit reranker if first-result accuracy plateaus
+
+---
+
+## Session 44 — 2026-04-15
+
+### What Was Done
+- **Observability Phase 3: Eval + Reranker traces.** Implemented full plan (7 tasks, TDD):
+  - `withActiveSpan` helper: activates a passive OTel span so child spans nest under it
+  - `IActiveObservationHandle` interface: extends `IObservationHandle` with `_otelSpan` reference
+  - `runEvalTrace`: root Langfuse trace per eval run (session ID, tags, config, dry-run flag)
+  - `runEvalQuerySpan`: child span per golden dataset query (input/output with scoring metrics)
+  - Eval command (`src/commands/eval.ts`) fully instrumented with trace wrappers + `eval-analysis` span
+  - Reranker (`src/lib/search/reranker.ts`) instrumented with `rerank.prepare`, `rerank.queue-wait`, `rerank.api-call` spans
+  - `ai-search.ts` updated: `withActiveSpan` wraps reranker call for proper child nesting
+- **Eval run 16 executed and verified:**
+  - 1,618 observations in Langfuse under one `eval-run` trace
+  - 144 `eval-query` spans with per-query input/output, nested `search` spans via OTel context propagation
+  - Reranker spans ready but inactive (reranker config is `'none'`)
+- **TypeScript fix:** `startSpan` return type changed to `IActiveObservationHandle` (was `IObservationHandle`, caused TS2353)
+
+### Key Decisions
+- Reranker spans are instrumented but won't fire until `reranker: 'cohere'` is enabled in search config
+- `comparisonSeverity` defaults to `'none'` when no previous run exists (plan assumed it always existed)
+- Hookify blocked an edit due to single-letter variable `j` in lambdas. Fixed by using `judgment` (consistent with rest of codebase)
+
+### Run 16 Metrics (vs Run 14)
+
+| Metric              | Run 14  | Run 16  | Delta   |
+|---------------------|---------|---------|---------|
+| Hit rate            | 96.2%   | 97.7%   | +1.5%   |
+| First-result acc.   | 62.9%   | 65.9%   | +3.0%   |
+| MRR                 | 0.749   | 0.773   | +0.025  |
+| NDCG                | 0.738   | 0.749   | +0.011  |
+| Recall              | 84.9%   | 82.8%   | -2.1%   |
+| Avg response time   | 563ms   | 768ms   | +205ms  |
+
+3 missed queries unchanged (vocabulary gap). Comparison severity: `block` (response time regression from tracing overhead + network variance).
+
+**Files changed:**
+- Modified: `src/lib/observability.ts`, `src/commands/eval.ts`, `src/lib/search/reranker.ts`, `src/lib/search/ai-search.ts`, `tests/observability.test.ts`
+- New: `docs/superpowers/plans/2026-04-16-eval-reranker-observability.md`, `docs/superpowers/specs/2026-04-16-eval-reranker-observability-design.md`
+
+**Tests:** 234 TypeScript (17 observability) + 7 reranker + 41 pgTAP
+
+### Next
+1. Commit all Phase 2 + Phase 3 changes
+2. Hookify `permissionDecisionReason` patch + upstream PR
+3. Revisit reranker (first-result accuracy 65.9% vs 85% target)
+4. Phase 4.7: Multi-format ingestion (research done, deferred)

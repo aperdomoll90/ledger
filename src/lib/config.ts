@@ -39,6 +39,15 @@ export interface LedgerConfig {
   supabase: SupabaseClient;
   openai: OpenAI;
   cohereApiKey?: string;
+  // Observability (Phase 2): mirror IClientsProps so loadConfig output is
+  // directly passable to search functions.
+  sessionId?: string;
+  observabilityEnvironment?: string;
+}
+
+export interface ILoadConfigOptionsProps {
+  sessionId?: string;
+  observabilityEnvironment?: string;
 }
 
 export interface ConfigFile {
@@ -99,7 +108,7 @@ const openaiHeaderFetch: typeof fetch = async (input, init) => {
 
 // --- Load Config ---
 
-export function loadConfig(): LedgerConfig {
+export function loadConfig(options?: ILoadConfigOptionsProps): LedgerConfig {
   // Priority: env vars > DOTENV_CONFIG_PATH > ~/.ledger/.env
   const dotenvPath = process.env.DOTENV_CONFIG_PATH
     || (existsSync(LEDGER_DOTENV) ? LEDGER_DOTENV : undefined);
@@ -127,5 +136,7 @@ export function loadConfig(): LedgerConfig {
     ),
     openai: observeOpenAI(new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 5, fetch: openaiHeaderFetch })),
     cohereApiKey: process.env.COHERE_API_KEY || undefined,
+    sessionId: options?.sessionId,
+    observabilityEnvironment: options?.observabilityEnvironment,
   };
 }

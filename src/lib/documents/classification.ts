@@ -162,4 +162,9 @@ export interface IClientsProps {
   supabase: ISupabaseClientProps;
   openai: IOpenAIClientProps;
   cohereApiKey?: string;
+  // Observability (Phase 2). Optional so callers can tag traces per-invocation.
+  // sessionId groups related searches in Langfuse (cli-<uuid>, mcp-<uuid>, eval-<run_id>).
+  // observabilityEnvironment overrides the global NODE_ENV-based environment.
+  sessionId?: string;
+  observabilityEnvironment?: string;
 }

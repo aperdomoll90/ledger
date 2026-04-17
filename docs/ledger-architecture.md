@@ -256,16 +256,27 @@ This is the same pattern used by Netflix, Uber, and Stripe for service observabi
 | Metrics               | Hit rate, MRR, NDCG, recall                  | Latency per span, token usage, cost, errors  |
 | Update frequency      | Periodic eval runs                           | Every pipeline invocation (always-on)        |
 
+**Search-specific trace structure (Phase 2):**
+
+Every search call produces a root `search` trace with:
+
+- `environment`: `prod` / `eval` / `development` (set per caller; eval runner hardcodes `eval`)
+- `sessionId`: MCP process UUID, CLI invocation UUID, or `eval-<eval_run_id>`
+- `tags`: `["search", mode]` where `mode` is `vector` / `keyword` / `hybrid` / `hybrid+rerank`
+- `input`: `{ query, filters }`; `output`: `{ resultCount, topResultIds, cacheHit }`; `metadata`: `{ threshold, limit, rerankerEnabled }`
+
+Children: auto-captured `query-embedding` generation span, plus manual spans for `semantic-cache-lookup`, `retrieve` (cache miss only), `rerank` (when enabled), and `semantic-cache-store`. Inside the hybrid path, the Postgres function returns a `timing jsonb` sidecar (`vector_ms`, `keyword_ms`, `fusion_ms`), and TypeScript emits three child spans (`retrieve.vector`, `retrieve.keyword`, `retrieve.fusion`) with reconstructed timestamps. Cache hits short-circuit: no downstream spans emitted.
+
 **Phasing:**
 
-| Phase   | Scope                                                        | Status         |
-|---------|--------------------------------------------------------------|----------------|
-| Phase 1 | Ingestion traces (create/update document)                   | In progress    |
-| Phase 2 | Search traces (query embedding, cache, search, RRF)         | Deferred       |
-| Phase 3 | Eval traces (golden queries, eval runs)                     | Deferred       |
-| Phase 4 | Alerting (budget thresholds, latency anomalies)             | Deferred       |
+| Phase   | Scope                                                        | Status          |
+|---------|--------------------------------------------------------------|-----------------|
+| Phase 1 | Ingestion traces (create/update document)                    | Done (S42)      |
+| Phase 2 | Search traces + MCP server instrumentation                   | Planned (S43)   |
+| Phase 3 | Eval traces (golden queries, eval runs)                      | Deferred        |
+| Phase 4 | Alerting (budget thresholds, latency anomalies)              | Deferred        |
 
-**Spec:** `docs/superpowers/specs/2026-04-14-observability-langfuse-design.md`
+**Specs:** `docs/superpowers/specs/2026-04-14-observability-langfuse-design.md` (Phase 1), `docs/superpowers/specs/2026-04-15-phase-2-search-observability-design.md` (Phase 2)
 
 ## Repo Structure
 
