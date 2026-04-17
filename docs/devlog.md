@@ -2315,3 +2315,90 @@ Added automated pipeline observability to Ledger using self-hosted Langfuse. Eve
 2. Hookify `permissionDecisionReason` patch + upstream PR
 3. Revisit reranker (first-result accuracy 65.9% vs 85% target)
 4. Phase 4.7: Multi-format ingestion (research done, deferred)
+
+---
+
+## Session 44b — 2026-04-16
+
+### What Was Done
+- **Reranker observability verified live.** Enabled reranker (`'cohere'`), ran dry-run eval, confirmed all 4 span types land in Langfuse: `rerank`, `rerank.prepare`, `rerank.queue-wait`, `rerank.api-call`. 33 rerank spans observed.
+- **Reranker impact measured (dry-run, 144 queries):**
+
+| Metric              | No reranker (run 16) | With reranker | Delta   |
+|---------------------|----------------------|---------------|---------|
+| Hit rate            | 97.7%                | 99.2%         | +1.5%   |
+| First-result acc.   | 65.9%                | 65.2%         | -0.7%   |
+| Recall              | 82.8%                | 86.4%         | +3.6%   |
+| MRR                 | 0.773                | 0.770         | -0.003  |
+| NDCG                | 0.749                | 0.757         | +0.008  |
+| Score separation    | 0.004                | 0.045         | +11x    |
+| Missed queries      | 3                    | 1             | -2      |
+| Avg response time   | 768ms                | 1047ms        | +279ms  |
+
+- **Decision: reranker stays off.** Privacy concern unchanged (document content sent to Cohere). Reranker helps recall and score separation but does not fix first-result accuracy (the main gap).
+- **Bug found and fixed:** `~/.ledger/.env` was missing `COHERE_API_KEY`. CLI loads config from `~/.ledger/.env`, not repo `.env`. Key was added manually.
+- **Phase 2 + Phase 3 committed and merged to main** (before this sub-session).
+
+### Key Decisions
+- Reranker disabled, data collected for future reference
+- First-result accuracy gap (65.9% vs 85%) remains the primary quality problem. Reranker is not the solution for this metric.
+
+### Next
+1. Investigate first-result accuracy gap (reranker doesn't help, need different approach)
+2. Phase 4.7: Multi-format ingestion (research done, deferred)
+
+## Session 45 — 2026-04-16
+
+### What Was Done
+- **First-result accuracy diagnostic investigation.** Built `src/scripts/diagnose-first-result.ts` to classify all 144 eval queries by failure mode (near-miss, buried, absent, unjudged winner). Produced structured markdown reports at `docs/analysis/`.
+- **Golden dataset audit and cleanup (12 query rewrites):**
+  - 4 ambiguous queries rewritten to be Ledger-specific (#24, #28, #30, #32)
+  - 5 vague technical queries anchored to Ledger (#33, #34, #39, #40, #41)
+  - 3 more queries fixed during grading (#25, #31, #92)
+  - Root cause: queries lacked "Ledger" context, so general RAG reference docs were valid matches, making failures look like search problems when they were dataset problems
+- **Unjudged winner problem resolved.** Run 16 had 12 queries where position-1 doc was never graded. All 11 remaining unjudged pairs graded (mostly grade 0-1 for magnet docs #152, #144). Run 19 has 0 unjudged winners.
+- **Judgment fixes (13 changes):**
+  - Downgraded #144 (general RAG guide) from g3 to g1 for 4 Ledger-specific queries
+  - Downgraded #18 (atelier-infrastructure) from g3 to g1 for query #133
+  - Added 9 new judgments for correct Ledger-specific docs and general reference child docs (#153, #155, #163, #165, #166, #20, #24, #145, #148)
+- **Eval library research.** Investigated Promptfoo, Braintrust, Ragas, Evalite. None provide IR metrics (NDCG, MRR, hit rate). Custom system is better for our use case. Braintrust only option worth revisiting for experiment tracking infra.
+- **Built `src/scripts/grade-unjudged-top1.ts`** for targeted grading of specific query-doc pairs.
+
+### New Baseline (Run 19, clean dataset)
+
+| Metric                | Run 16 (before) | Run 19 (after) | Change  |
+|-----------------------|-----------------|----------------|---------|
+| Hit rate              | 97.7%           | 98.5%          | +0.8%   |
+| First-result accuracy | 65.9%           | 66.7%          | +0.8%   |
+| Recall                | 82.8%           | 83.1%          | +0.3%   |
+| MRR                   | 0.773           | 0.775          | +0.002  |
+| NDCG                  | 0.749           | 0.758          | +0.009  |
+| Unjudged winners      | 12              | 0              | Fixed   |
+| Missed queries        | 3               | 2              | -1      |
+
+### Failure Taxonomy (Run 19)
+
+| Category    | Count | %     |
+|-------------|-------|-------|
+| Near miss   | 23    | 17.4% |
+| Buried      | 19    | 14.4% |
+| Absent      | 2     | 1.5%  |
+
+### Key Findings
+1. **Dataset quality was a significant confounding factor.** 12 queries were ambiguous (could match general RAG docs equally well as Ledger-specific docs). 12 top-1 results were never graded. These masked the true search quality.
+2. **Magnet document problem identified.** Broad docs (#152 database-schemas, #144 general RAG, #137 architecture overview, #129 claude-md) accumulate keyword hits across many chunks and outrank specific docs. Doc #152 appeared at position 1 for 5+ different failing queries.
+3. **Score separation is near zero.** Near-miss median gap is 0.0003 between position 1 and 2. The ranking is a coin flip for 23 queries.
+4. **Remaining failures are real search pipeline issues,** not dataset/measurement artifacts.
+
+### Key Decisions
+- Eval library adoption: not recommended. Custom system is purpose-built for IR metrics.
+- Dataset fixes take priority over pipeline changes (measure correctly before optimizing)
+- `ledger-spec-embeddings` (#24) flagged as misplaced in Ledger corpus (general content, fix later)
+
+### Next
+1. **Search pipeline improvements** to fix remaining 33.3% failure rate:
+   - RRF weight tuning (vector vs keyword balance)
+   - Document-level score aggregation (penalize broad/shallow matches)
+   - Query-type-aware boosting (exact-term queries should weight keyword higher)
+2. Phase 4.7: Multi-format ingestion (deferred)
+3. Move `ledger-spec-embeddings` (#24) out of Ledger corpus or restructure
