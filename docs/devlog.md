@@ -2266,3 +2266,52 @@ Added automated pipeline observability to Ledger using self-hosted Langfuse. Eve
 3. Hookify `permissionDecisionReason` patch + upstream PR
 4. Phase 3: Eval traces as first-class Langfuse objects (deferred)
 5. Revisit reranker if first-result accuracy plateaus
+
+---
+
+## Session 44 — 2026-04-15
+
+### What Was Done
+- **Observability Phase 3: Eval + Reranker traces.** Implemented full plan (7 tasks, TDD):
+  - `withActiveSpan` helper: activates a passive OTel span so child spans nest under it
+  - `IActiveObservationHandle` interface: extends `IObservationHandle` with `_otelSpan` reference
+  - `runEvalTrace`: root Langfuse trace per eval run (session ID, tags, config, dry-run flag)
+  - `runEvalQuerySpan`: child span per golden dataset query (input/output with scoring metrics)
+  - Eval command (`src/commands/eval.ts`) fully instrumented with trace wrappers + `eval-analysis` span
+  - Reranker (`src/lib/search/reranker.ts`) instrumented with `rerank.prepare`, `rerank.queue-wait`, `rerank.api-call` spans
+  - `ai-search.ts` updated: `withActiveSpan` wraps reranker call for proper child nesting
+- **Eval run 16 executed and verified:**
+  - 1,618 observations in Langfuse under one `eval-run` trace
+  - 144 `eval-query` spans with per-query input/output, nested `search` spans via OTel context propagation
+  - Reranker spans ready but inactive (reranker config is `'none'`)
+- **TypeScript fix:** `startSpan` return type changed to `IActiveObservationHandle` (was `IObservationHandle`, caused TS2353)
+
+### Key Decisions
+- Reranker spans are instrumented but won't fire until `reranker: 'cohere'` is enabled in search config
+- `comparisonSeverity` defaults to `'none'` when no previous run exists (plan assumed it always existed)
+- Hookify blocked an edit due to single-letter variable `j` in lambdas. Fixed by using `judgment` (consistent with rest of codebase)
+
+### Run 16 Metrics (vs Run 14)
+
+| Metric              | Run 14  | Run 16  | Delta   |
+|---------------------|---------|---------|---------|
+| Hit rate            | 96.2%   | 97.7%   | +1.5%   |
+| First-result acc.   | 62.9%   | 65.9%   | +3.0%   |
+| MRR                 | 0.749   | 0.773   | +0.025  |
+| NDCG                | 0.738   | 0.749   | +0.011  |
+| Recall              | 84.9%   | 82.8%   | -2.1%   |
+| Avg response time   | 563ms   | 768ms   | +205ms  |
+
+3 missed queries unchanged (vocabulary gap). Comparison severity: `block` (response time regression from tracing overhead + network variance).
+
+**Files changed:**
+- Modified: `src/lib/observability.ts`, `src/commands/eval.ts`, `src/lib/search/reranker.ts`, `src/lib/search/ai-search.ts`, `tests/observability.test.ts`
+- New: `docs/superpowers/plans/2026-04-16-eval-reranker-observability.md`, `docs/superpowers/specs/2026-04-16-eval-reranker-observability-design.md`
+
+**Tests:** 234 TypeScript (17 observability) + 7 reranker + 41 pgTAP
+
+### Next
+1. Commit all Phase 2 + Phase 3 changes
+2. Hookify `permissionDecisionReason` patch + upstream PR
+3. Revisit reranker (first-result accuracy 65.9% vs 85% target)
+4. Phase 4.7: Multi-format ingestion (research done, deferred)

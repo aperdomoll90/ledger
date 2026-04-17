@@ -6,6 +6,7 @@ import { scoreTestCase, computeMetrics, formatReport, compareRuns, formatCompari
 import type { IGoldenTestCaseProps, ITestResultProps } from '../lib/eval/eval.js';
 import { saveEvalRun, loadPreviousRun, loadEvalRun, CURRENT_SEARCH_CONFIG } from '../lib/eval/eval-store.js';
 import { computeConfidenceIntervals, computeScoreCalibration, computeCoverageAnalysis, formatAdvancedReport } from '../lib/eval/eval-advanced.js';
+import { runEvalTrace, runEvalQuerySpan, startSpan } from '../lib/observability.js';
 
 // =============================================================================
 // Interfaces
@@ -66,74 +67,131 @@ export async function evalSearch(config: LedgerConfig, options: IEvalOptionsProp
 
   console.log(`Loaded ${(testCases as IGoldenTestCaseProps[]).length} test cases.\n`);
 
-  const results: ITestResultProps[] = [];
+  await runEvalTrace({
+    sessionId: clients.sessionId!,
+    tags: ['eval', 'run'],
+    config: CURRENT_SEARCH_CONFIG as unknown as Record<string, unknown>,
+    dryRun: options.dryRun,
+  }, async (evalTrace) => {
 
-  for (const testCase of testCases as IGoldenTestCaseProps[]) {
-    const startTime = Date.now();
-    const searchResults = await searchHybrid(clients, {
-      query: testCase.query,
-      limit: CURRENT_SEARCH_CONFIG.limit as number,
-      reranker: CURRENT_SEARCH_CONFIG.reranker as 'none' | 'cohere',
-    });
-    const result = scoreTestCase(testCase, searchResults, Date.now() - startTime);
-    results.push(result);
+    const results: ITestResultProps[] = [];
 
-    const isOutOfScope = !testCase.judgments.some(judgment => judgment.grade >= 2);
-    if (isOutOfScope) {
-      const status = result.hit ? 'PASS' : `NOISE (${result.returnedIds.length} results)`;
-      console.log(`  [${status}] "${testCase.query}" (out-of-scope)`);
-    } else {
-      const status = result.firstResultHit ? 'TOP' : result.hit ? 'HIT' : 'MISS';
-      const positionInfo = result.position !== null ? `@${result.position + 1}` : '';
-      console.log(`  [${status}${positionInfo}] "${testCase.query}" → found ${result.expectedFound}/${result.expectedTotal}`);
+    for (const testCase of testCases as IGoldenTestCaseProps[]) {
+      const scored = await runEvalQuerySpan({
+        query: testCase.query,
+        goldenId: testCase.id,
+        tags: testCase.tags,
+        expectedDocs: testCase.judgments
+          .filter(judgment => judgment.grade >= 2)
+          .map(judgment => judgment.document_id),
+      }, async (querySpan) => {
+        const startTime = Date.now();
+        const searchResults = await searchHybrid(clients, {
+          query: testCase.query,
+          limit: CURRENT_SEARCH_CONFIG.limit as number,
+          reranker: CURRENT_SEARCH_CONFIG.reranker as 'none' | 'cohere',
+        });
+        const result = scoreTestCase(testCase, searchResults, Date.now() - startTime);
+        querySpan.update({
+          output: {
+            hit: result.hit,
+            firstResultHit: result.firstResultHit,
+            position: result.position,
+            reciprocalRank: result.reciprocalRank,
+            normalizedDiscountedCumulativeGain: result.normalizedDiscountedCumulativeGain,
+            responseTimeMs: Date.now() - startTime,
+          },
+        });
+        return result;
+      });
+
+      results.push(scored);
+
+      const isOutOfScope = !testCase.judgments.some(judgment => judgment.grade >= 2);
+      if (isOutOfScope) {
+        const status = scored.hit ? 'PASS' : `NOISE (${scored.returnedIds.length} results)`;
+        console.log(`  [${status}] "${testCase.query}" (out-of-scope)`);
+      } else {
+        const status = scored.firstResultHit ? 'TOP' : scored.hit ? 'HIT' : 'MISS';
+        const positionInfo = scored.position !== null ? `@${scored.position + 1}` : '';
+        console.log(`  [${status}${positionInfo}] "${testCase.query}" → found ${scored.expectedFound}/${scored.expectedTotal}`);
+      }
     }
-  }
 
-  const metrics = computeMetrics(results);
-  console.log('\n' + formatReport(metrics));
+    const metrics = computeMetrics(results);
+    console.log('\n' + formatReport(metrics));
 
-  // Compute advanced analysis before saving so everything is persisted
-  const confidenceIntervals = computeConfidenceIntervals(results);
-  const scoreCalibration = computeScoreCalibration(results);
-  const coverageAnalysis = computeCoverageAnalysis(results);
+    // Advanced analysis
+    const confidenceIntervals = computeConfidenceIntervals(results);
+    const scoreCalibration = computeScoreCalibration(results);
+    const coverageAnalysis = computeCoverageAnalysis(results);
 
-  if (!options.dryRun) {
-    const runId = await saveEvalRun(clients.supabase, {
-      metrics,
-      config: CURRENT_SEARCH_CONFIG,
-      results,
-      confidenceIntervals,
-      scoreCalibration,
-      coverageAnalysis,
+    // Eval analysis span
+    const analysisSpan = startSpan('eval-analysis');
+    analysisSpan.update({
+      input: {
+        testCaseCount: results.length,
+        normalCount: metrics.normalCases,
+        outOfScopeCount: metrics.outOfScopeCases,
+      },
     });
-    process.stderr.write(`\nRun saved to eval_runs (id: ${runId})\n`);
-  }
 
-  if (previousRun) {
-    const comparison = compareRuns(
-      {
-        hitRate:                              metrics.hitRate,
-        firstResultAccuracy:                 metrics.firstResultAccuracy,
-        recall:                              metrics.recall,
-        zeroResultRate:                      metrics.zeroResultRate,
-        meanReciprocalRank:                  metrics.meanReciprocalRank,
-        normalizedDiscountedCumulativeGain:  metrics.normalizedDiscountedCumulativeGain,
-        avgResponseTimeMs:                   metrics.avgResponseTimeMs,
-      },
-      {
-        hitRate:                              previousRun.hit_rate,
-        firstResultAccuracy:                 previousRun.first_result_accuracy,
-        recall:                              previousRun.recall,
-        zeroResultRate:                      previousRun.zero_result_rate,
-        meanReciprocalRank:                  previousRun.mean_reciprocal_rank ?? 0,
-        normalizedDiscountedCumulativeGain:  previousRun.normalized_discounted_cumulative_gain ?? 0,
-        avgResponseTimeMs:                   previousRun.avg_response_time_ms,
-      },
-    );
-    console.log('\n' + formatComparison(comparison));
-  }
+    if (!options.dryRun) {
+      const runId = await saveEvalRun(clients.supabase, {
+        metrics,
+        config: CURRENT_SEARCH_CONFIG,
+        results,
+        confidenceIntervals,
+        scoreCalibration,
+        coverageAnalysis,
+      });
+      process.stderr.write(`\nRun saved to eval_runs (id: ${runId})\n`);
+    }
 
-  console.log('\n' + formatAdvancedReport(confidenceIntervals, scoreCalibration, coverageAnalysis));
+    let comparisonSeverity = 'none';
+    if (previousRun) {
+      const comparison = compareRuns(
+        {
+          hitRate:                              metrics.hitRate,
+          firstResultAccuracy:                 metrics.firstResultAccuracy,
+          recall:                              metrics.recall,
+          zeroResultRate:                      metrics.zeroResultRate,
+          meanReciprocalRank:                  metrics.meanReciprocalRank,
+          normalizedDiscountedCumulativeGain:  metrics.normalizedDiscountedCumulativeGain,
+          avgResponseTimeMs:                   metrics.avgResponseTimeMs,
+        },
+        {
+          hitRate:                              previousRun.hit_rate,
+          firstResultAccuracy:                 previousRun.first_result_accuracy,
+          recall:                              previousRun.recall,
+          zeroResultRate:                      previousRun.zero_result_rate,
+          meanReciprocalRank:                  previousRun.mean_reciprocal_rank ?? 0,
+          normalizedDiscountedCumulativeGain:  previousRun.normalized_discounted_cumulative_gain ?? 0,
+          avgResponseTimeMs:                   previousRun.avg_response_time_ms,
+        },
+      );
+      console.log('\n' + formatComparison(comparison));
+      comparisonSeverity = comparison.severity;
+    }
+
+    analysisSpan.update({
+      output: { metrics, comparisonSeverity },
+    });
+    analysisSpan.end();
+
+    evalTrace.update({
+      output: {
+        hitRate: metrics.hitRate,
+        firstResultAccuracy: metrics.firstResultAccuracy,
+        recall: metrics.recall,
+        meanReciprocalRank: metrics.meanReciprocalRank,
+        normalizedDiscountedCumulativeGain: metrics.normalizedDiscountedCumulativeGain,
+        comparisonSeverity,
+      },
+    });
+
+    console.log('\n' + formatAdvancedReport(confidenceIntervals, scoreCalibration, coverageAnalysis));
+  });
 }
 
 // =============================================================================

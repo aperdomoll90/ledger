@@ -14,6 +14,7 @@
 
 import type { ISearchResultProps } from './ai-search.js';
 import { cohereLimiter } from '../rate-limiter.js';
+import { startSpan } from '../observability.js';
 
 const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 const COHERE_RERANK_MODEL = 'rerank-v3.5';
@@ -67,14 +68,27 @@ export async function rerankResults(
   const topN = options.topN ?? searchResults.length;
   const model = options.model ?? COHERE_RERANK_MODEL;
 
+  // --- rerank.prepare ---
+  const prepareSpan = startSpan('rerank.prepare');
   const documents = searchResults.map(searchResult => ({
     text: searchResult.content,
   }));
+  const totalContentLength = documents.reduce((sum, document) => sum + document.text.length, 0);
+  prepareSpan.update({ output: { documentCount: documents.length, totalContentLength } });
+  prepareSpan.end();
 
+  // --- rerank.queue-wait + rerank.api-call ---
+  const queueSpan = startSpan('rerank.queue-wait');
   let response: Response;
   try {
-    response = await cohereLimiter.schedule(() =>
-      fetch(COHERE_RERANK_URL, {
+    response = await cohereLimiter.schedule(() => {
+      queueSpan.end();
+
+      const apiSpan = startSpan('rerank.api-call');
+      apiSpan.update({ input: { model, topN, documentCount: documents.length } });
+      const apiStartMs = Date.now();
+
+      return fetch(COHERE_RERANK_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${options.apiKey}`,
@@ -86,8 +100,27 @@ export async function rerankResults(
           documents,
           top_n: topN,
         }),
-      }),
-    );
+      }).then(fetchResponse => {
+        apiSpan.update({
+          output: {
+            statusCode: fetchResponse.status,
+            latencyMs: Date.now() - apiStartMs,
+          },
+        });
+        apiSpan.end();
+        return fetchResponse;
+      }).catch(fetchError => {
+        apiSpan.update({
+          output: {
+            error: (fetchError as Error).message,
+            errorType: 'network',
+            latencyMs: Date.now() - apiStartMs,
+          },
+        });
+        apiSpan.end();
+        throw fetchError;
+      });
+    });
   } catch (_networkError) {
     // Network failure or limiter error — return originals unchanged
     return searchResults;

@@ -12,7 +12,7 @@ import {
   SEMANTIC_CACHE_MODEL_ID,
   SEMANTIC_CACHE_THRESHOLD,
 } from './semantic-cache.js';
-import { runSearchTrace, startSpan, recordChildSpan } from '../observability.js';
+import { runSearchTrace, startSpan, recordChildSpan, withActiveSpan } from '../observability.js';
 
 // =============================================================================
 // Search result interfaces
@@ -464,9 +464,11 @@ export async function searchHybrid(
   if (useReranker && results.length > 0) {
     const rerankSpan = startSpan('rerank');
     const inputCount = results.length;
-    results = await rerankResults(props.query, results, {
-      apiKey: clients.cohereApiKey!,
-      topN: desiredLimit,
+    results = await withActiveSpan(rerankSpan, async () => {
+      return rerankResults(props.query, results, {
+        apiKey: clients.cohereApiKey!,
+        topN: desiredLimit,
+      });
     });
     rerankSpan.update({ output: { inputCount, outputCount: results.length } });
     rerankSpan.end();

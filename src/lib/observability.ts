@@ -14,7 +14,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { LangfuseSpanProcessor } from '@langfuse/otel';
 import { setLangfuseTracerProvider, startObservation, startActiveObservation } from '@langfuse/tracing';
 import { propagateAttributes } from '@langfuse/core';
-import { trace as otelTrace, type Span as OTelSpan } from '@opentelemetry/api';
+import { trace as otelTrace, context as otelContext, type Span as OTelSpan } from '@opentelemetry/api';
 
 // =============================================================================
 // State
@@ -35,6 +35,16 @@ export interface IObservationHandle {
 const NOOP_HANDLE: IObservationHandle = {
   update: () => {},
   end: () => {},
+};
+
+export interface IActiveObservationHandle extends IObservationHandle {
+  _otelSpan: OTelSpan | null;
+}
+
+const NOOP_ACTIVE_HANDLE: IActiveObservationHandle = {
+  update: () => {},
+  end: () => {},
+  _otelSpan: null,
 };
 
 // =============================================================================
@@ -141,8 +151,8 @@ export function startTrace(
 export function startSpan(
   name: string,
   options?: { input?: Record<string, unknown>; metadata?: Record<string, unknown> },
-): IObservationHandle {
-  if (!enabled) return NOOP_HANDLE;
+): IActiveObservationHandle {
+  if (!enabled) return NOOP_ACTIVE_HANDLE;
 
   const tracer = otelTrace.getTracer('langfuse-sdk');
   const span: OTelSpan = tracer.startSpan(name);
@@ -164,6 +174,7 @@ export function startSpan(
       }
     },
     end: () => span.end(),
+    _otelSpan: span,
   };
 }
 
@@ -240,6 +251,98 @@ export async function runSearchTrace<T>(
   );
 }
 
+// =============================================================================
+// Eval-specific helpers (Phase 3)
+// =============================================================================
+
+export interface IStartEvalTraceProps {
+  sessionId: string;
+  tags: string[];
+  config: Record<string, unknown>;
+  dryRun: boolean;
+}
+
+/**
+ * Run an eval execution inside an open Langfuse trace.
+ *
+ * Creates a root trace named 'eval-run' that groups all per-query spans
+ * under one session. The search traces from Phase 2 (runSearchTrace)
+ * auto-nest under per-query spans via OTel context propagation.
+ *
+ * When observability is disabled, `work` runs with a no-op handle.
+ */
+export async function runEvalTrace<T>(
+  props: IStartEvalTraceProps,
+  work: (trace: IObservationHandle) => Promise<T>,
+): Promise<T> {
+  if (!enabled) return work(NOOP_HANDLE);
+
+  const tags = props.dryRun ? [...props.tags, 'dry-run'] : props.tags;
+
+  return propagateAttributes(
+    {
+      sessionId: props.sessionId,
+      tags,
+    },
+    async (): Promise<T> => {
+      return startActiveObservation('eval-run', async (observation): Promise<T> => {
+        observation.update({
+          input: props.config,
+          environment: 'eval',
+          ...({ sessionId: props.sessionId, tags } as Record<string, unknown>),
+        });
+        const handle: IObservationHandle = {
+          update: (data: Record<string, unknown>) => observation.update(data),
+          end: () => observation.end(),
+        };
+        return work(handle);
+      });
+    },
+  );
+}
+
+export interface IStartEvalQuerySpanProps {
+  query: string;
+  goldenId: number;
+  tags: string[];
+  expectedDocs: number[];
+}
+
+/**
+ * Run a single eval query inside a child span of the eval trace.
+ *
+ * Wraps the searchHybrid call + scoring for one golden dataset query.
+ * The search trace (runSearchTrace) fires inside this span and auto-nests.
+ *
+ * When observability is disabled, `work` runs with a no-op handle.
+ */
+export async function runEvalQuerySpan<T>(
+  props: IStartEvalQuerySpanProps,
+  work: (span: IObservationHandle) => Promise<T>,
+): Promise<T> {
+  if (!enabled) return work(NOOP_HANDLE);
+
+  return startActiveObservation('eval-query', async (observation): Promise<T> => {
+    observation.update({
+      input: {
+        query: props.query,
+        goldenId: props.goldenId,
+        tags: props.tags,
+        expectedDocs: props.expectedDocs,
+      },
+    });
+    const handle: IObservationHandle = {
+      update: (data: Record<string, unknown>) => observation.update(data),
+      end: () => observation.end(),
+    };
+    return work(handle);
+  });
+}
+
+// =============================================================================
+// Child span helpers
+// =============================================================================
+
 /**
  * Emit a completed span with pre-computed duration.
  *
@@ -274,4 +377,26 @@ export function recordChildSpan(
   }));
 
   span.end(endMs);
+}
+
+/**
+ * Execute work within an active OTel context for the given span.
+ *
+ * Child spans created inside `work` (via startSpan or recordChildSpan)
+ * will nest under this span. Used to activate a passive span created
+ * by startSpan before calling code that needs to emit children.
+ *
+ * No-op when observability is disabled or span has no OTel reference.
+ */
+export async function withActiveSpan<T>(
+  handle: IObservationHandle,
+  work: () => Promise<T>,
+): Promise<T> {
+  const activeHandle = handle as IActiveObservationHandle;
+  if (!enabled || !activeHandle._otelSpan) return work();
+
+  return otelContext.with(
+    otelTrace.setSpan(otelContext.active(), activeHandle._otelSpan),
+    work,
+  );
 }
