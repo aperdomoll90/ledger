@@ -14,8 +14,8 @@ AI identity and memory system. MCP server + CLI for syncing agent memory across 
 ```
 src/
 ├── cli.ts              → Entry point (commander)
-├── commands/           → add, backup, check, delete, eval, export, init, lint, list, push, restore, show, tag, update (16 commands incl. eval:sweep)
-├── lib/                → config, hash, notes, domains, audit, backfill, file-writer, errors, prompt
+├── commands/           → add, backup, check, delete, eval, eval-judge, export, get, init, lint, list, push, restore, show, tag, update (16 files; eval registers `eval:sweep` and `eval:judge` subcommands)
+├── lib/                → config.ts, errors.ts, hash.ts, lint-configs.ts, migrate.ts, observability.ts, prompt.ts, rate-limiter.ts, plus subdirs documents/ (classification, fetching, operations), search/ (ai-search, chunk-context-enrichment, embeddings, reranker, semantic-cache), eval/ (eval, eval-store, eval-advanced, eval-judge-session)
 ├── hooks/              → block-env.sh, post-write-ledger.sh, session-end-check.sh
 ├── migrations/         → 000-tracking, 001-schema, 002-functions, 003-rls, 004-upsert-key-unique, 005-audit-log
 └── mcp-server.ts       → MCP server (18 tools, including the `_from_file` write variants)

@@ -2475,6 +2475,17 @@ Phase 1 only adds new APIs alongside the existing ones. Phases 2-4 (separate bra
 ### Commits (S48)
 - TBD (single commit covering CLAUDE.md edit + this devlog block).
 
+### Phase 3 follow-up edits (same branch)
+
+After PR #16 was opened, Adrian asked for the staleness fixes flagged in the PR description to land on the same branch instead of being a follow-up PR. Same-branch additions:
+
+- **`CLAUDE.md` `lib/` directory listing rewritten.** Old listing referenced files that don't exist (`notes`, `domains`, `audit`, `backfill`, `file-writer`). New listing matches the real `src/lib/` (`config.ts`, `errors.ts`, `hash.ts`, `lint-configs.ts`, `migrate.ts`, `observability.ts`, `prompt.ts`, `rate-limiter.ts`, plus the `documents/`, `search/`, `eval/` subdirs and their actual contents). `commands/` listing extended to include `eval-judge.ts` and `get.ts` which were missing.
+- **#137 `ledger-architecture`:** four "16 tools" references bumped to 18 (the architecture-flow ASCII at line 46, the architecture-documents table reference for #141, the MCP Tools section header, the repo-structure ASCII at the bottom). MCP Tools table updated to show the new CRUD tools `add_document_from_file` and `update_document_from_file` in bold, and a paragraph below the table explains the `_from_file` pattern + FS-access allowlist.
+- **#141 `ledger-architecture-mcp-tools`:** lede bumped from "16 tools: 10 new + 6 deprecated" to "18 tools: 12 new + 6 deprecated". Added full param-table entries for `add_document_from_file` and `update_document_from_file`, marked the inline-content `add_document` and `update_document` as deprecated for new code with a pointer to the file-based variants.
+- **#140 `ledger-architecture-typescript`:** project-structure MCP-server line bumped to 18 tools. Testing section bumped from "220 tests across 16 files, 2 skipped" to "240 tests across 18 files, 3 skipped"; added the new `document-operations-from-file.test.ts` row; bumped `mcp-server.test.ts` row from "16 tools registered" to "18 tools registered". Replaced the trailing "Tests in `tests/` directory (separate from source)" footnote with a fuller note in the section intro that explains why this repo deviates from the global tests-next-to-source rule (npm-package path conflicts).
+
+All three Ledger doc pushes verified clean by the helper itself: #137 20,655 bytes, #141 7,620 bytes, #140 19,486 bytes.
+
 ### Next
 1. Phase 3 PR review + merge.
 2. **Delete the transient spec** at `~/.ledger/transient/ledger-spec-file-based-write-api.md` after Phase 3 merges (with explicit user permission, per the transient-spec rule). The durable docs now carry the protocol description; the spec has fulfilled its purpose.
