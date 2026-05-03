@@ -2460,3 +2460,33 @@ Phase 1 only adds new APIs alongside the existing ones. Phases 2-4 (separate bra
 ### Next
 1. **Phase 3 (docs):** update `~/repos/ledger/CLAUDE.md` to describe the file-based write protocol (replacing any prose that still references the `-c` / composed-string paths). Update the Ledger ingestion architecture doc and the general RAG reference doc input section. After Phase 3 lands, the spec at `~/.ledger/transient/ledger-spec-file-based-write-api.md` can be deleted (with explicit user permission, per the transient-spec rule).
 2. **Phase 4 (audit + cutover):** `rg` callers of `mcp__ledger__update_document\(.*content` / `mcp__ledger__add_document\(.*content` and `ledger update -c` / `ledger add -c` across `~/repos/` and `~/.claude/`. Migrate every caller to the `_from_file` variants. Then remove the old paths from `cli.ts`, `commands/update.ts`, `commands/add.ts`, and `mcp-server.ts`. Audit other CLI commands (`tag`, `eval`, etc.) for similar ARG_MAX risk in `-c`-style content flags. Add `--yes` to `ledger delete` for consistency with `update -f --yes`.
+
+## Session 48, 2026-05-02 (file-based write API, Phase 3 docs)
+
+### What Was Done
+- **Local `CLAUDE.md`:** added a new "Write Protocol" section describing the unified file-based write workflow (CLI `-f` and MCP `_from_file` variants), folder conventions (`~/.ledger/drafts/`, `~/.ledger/transient/`, `/tmp/ledger-edit/`), and the deprecated composed-string paths slated for removal in Phase 4. Bumped the project-structure note from "(6 tools)" to "(18 tools, including the `_from_file` write variants)".
+- **Ledger architecture doc (#140 `ledger-architecture-typescript`):** updated the `documents/operations.ts` module section. Two new rows in the function table for `createDocumentFromFile` / `updateDocumentFromFile`. Added a paragraph documenting the wrap pattern (read-from-disk -> existing pipeline -> `verifyAfterWrite()` pull-back byte-compare -> `VerifyMismatchError` on drift) and listed the exported types (`IFromFileResultProps`, `IUpdateFromFileProps`, `ICreateFromFileProps`) and error class.
+- **Ledger general RAG reference doc (#160 `reference-rag-core-ingestion`):** added a new "## The Input Contract" section between Step 9 (Transactional Write) and Performance Optimization. Frames the file-based input contract as a general RAG design pattern — independent of Ledger's specific implementation. Sections: the drift class of bug, the fix (file-based + auto-verify), folder conventions, why auto-verify is always-on, and why "also accept inline content for convenience" is a trap that perpetuates the bug. Includes the ARG_MAX kernel-limit rationale alongside the drift rationale.
+- **Pushes:** both Ledger docs pushed via the new `ledger update -f --yes` (dogfooded for the third time this session). Auto-verify clean on both: #140 18,220 bytes verified, #160 18,235 bytes verified. Local CLAUDE.md staged to commit on this branch (`chore/file-based-write-api-phase-3-docs`).
+
+### Tests
+- No code changes; full suite still green from S47.
+
+### Commits (S48)
+- TBD (single commit covering CLAUDE.md edit + this devlog block).
+
+### Phase 3 follow-up edits (same branch)
+
+After PR #16 was opened, Adrian asked for the staleness fixes flagged in the PR description to land on the same branch instead of being a follow-up PR. Same-branch additions:
+
+- **`CLAUDE.md` `lib/` directory listing rewritten.** Old listing referenced files that don't exist (`notes`, `domains`, `audit`, `backfill`, `file-writer`). New listing matches the real `src/lib/` (`config.ts`, `errors.ts`, `hash.ts`, `lint-configs.ts`, `migrate.ts`, `observability.ts`, `prompt.ts`, `rate-limiter.ts`, plus the `documents/`, `search/`, `eval/` subdirs and their actual contents). `commands/` listing extended to include `eval-judge.ts` and `get.ts` which were missing.
+- **#137 `ledger-architecture`:** four "16 tools" references bumped to 18 (the architecture-flow ASCII at line 46, the architecture-documents table reference for #141, the MCP Tools section header, the repo-structure ASCII at the bottom). MCP Tools table updated to show the new CRUD tools `add_document_from_file` and `update_document_from_file` in bold, and a paragraph below the table explains the `_from_file` pattern + FS-access allowlist.
+- **#141 `ledger-architecture-mcp-tools`:** lede bumped from "16 tools: 10 new + 6 deprecated" to "18 tools: 12 new + 6 deprecated". Added full param-table entries for `add_document_from_file` and `update_document_from_file`, marked the inline-content `add_document` and `update_document` as deprecated for new code with a pointer to the file-based variants.
+- **#140 `ledger-architecture-typescript`:** project-structure MCP-server line bumped to 18 tools. Testing section bumped from "220 tests across 16 files, 2 skipped" to "240 tests across 18 files, 3 skipped"; added the new `document-operations-from-file.test.ts` row; bumped `mcp-server.test.ts` row from "16 tools registered" to "18 tools registered". Replaced the trailing "Tests in `tests/` directory (separate from source)" footnote with a fuller note in the section intro that explains why this repo deviates from the global tests-next-to-source rule (npm-package path conflicts).
+
+All three Ledger doc pushes verified clean by the helper itself: #137 20,655 bytes, #141 7,620 bytes, #140 19,486 bytes.
+
+### Next
+1. Phase 3 PR review + merge.
+2. **Delete the transient spec** at `~/.ledger/transient/ledger-spec-file-based-write-api.md` after Phase 3 merges (with explicit user permission, per the transient-spec rule). The durable docs now carry the protocol description; the spec has fulfilled its purpose.
+3. **Phase 4 (audit + cutover):** unchanged from S47's devlog. Still pending.
