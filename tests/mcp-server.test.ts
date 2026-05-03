@@ -16,15 +16,16 @@ describe('mcp-server module', () => {
     expect(source).toContain("from './lib/search/ai-search.js'");
   });
 
-  it('registers all 16 tools (10 new + 6 deprecated)', async () => {
+  it('registers all 18 tools (12 new + 6 deprecated)', async () => {
     const { readFileSync } = await import('fs');
     const source = readFileSync(new URL('../src/mcp-server.ts', import.meta.url), 'utf-8');
 
     // New tools
     const newTools = [
-      'search_documents', 'add_document', 'list_documents',
-      'update_document', 'update_document_fields', 'delete_document',
-      'restore_document', 'search_by_meaning', 'search_by_keyword', 'get_document_context',
+      'search_documents', 'add_document', 'add_document_from_file', 'list_documents',
+      'update_document', 'update_document_from_file', 'update_document_fields',
+      'delete_document', 'restore_document',
+      'search_by_meaning', 'search_by_keyword', 'get_document_context',
     ];
     for (const tool of newTools) {
       expect(source).toContain(`'${tool}'`);

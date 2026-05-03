@@ -12,8 +12,10 @@ import { observeOpenAI } from '@langfuse/openai';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 import type { IClientsProps } from './lib/documents/classification.js';
-import { createDocument, updateDocument, updateDocumentFields, deleteDocument, restoreDocument } from './lib/documents/operations.js';
+import { createDocument, updateDocument, updateDocumentFields, deleteDocument, restoreDocument, updateDocumentFromFile, createDocumentFromFile, VerifyMismatchError } from './lib/documents/operations.js';
 import { getDocumentById, listDocuments } from './lib/documents/fetching.js';
 import { searchHybrid, searchByVector, searchByKeyword, retrieveContext } from './lib/search/ai-search.js';
 import { initObservability, shutdownObservability } from './lib/observability.js';
@@ -72,6 +74,52 @@ function textResponse(text: string) {
 
 function errorResponse(message: string) {
   return { content: [{ type: 'text' as const, text: `Error: ${message}` }] };
+}
+
+// =============================================================================
+// File-access allowlist for *_from_file tools
+// =============================================================================
+// The MCP server runs with the user's full FS permissions. The allowlist is
+// defense-in-depth: it stops accidental pushes of arbitrary files (e.g. /etc/passwd)
+// when an agent constructs a path it shouldn't. Agents that already have direct
+// FS access via Read tool can bypass this — that's expected. The point is to
+// keep wrong-path mistakes from silently succeeding through the Ledger pipeline.
+//
+// Override the defaults via env var `LEDGER_MCP_FILE_ACCESS_ALLOWLIST` (colon-separated
+// absolute paths or `~`-prefixed paths). Setting the env var REPLACES defaults
+// rather than extending them, so an explicit override is always strictly enforced.
+
+const FILE_ACCESS_ALLOWLIST_DEFAULTS = ['~/.ledger/', '~/repos/', '/tmp/ledger-edit/'];
+
+function expandHome(rawPath: string): string {
+  return rawPath.startsWith('~/') ? rawPath.replace(/^~/, homedir()) : rawPath;
+}
+
+function getFileAccessAllowlist(): string[] {
+  const envOverride = process.env.LEDGER_MCP_FILE_ACCESS_ALLOWLIST;
+  const sources = envOverride
+    ? envOverride.split(':').filter(entry => entry.length > 0)
+    : FILE_ACCESS_ALLOWLIST_DEFAULTS;
+  return sources.map(entry => resolve(expandHome(entry)) + '/');
+}
+
+function assertPathAllowed(absolutePath: string): void {
+  const allowlist = getFileAccessAllowlist();
+  if (!allowlist.some(prefix => absolutePath.startsWith(prefix))) {
+    throw new Error(
+      `Path "${absolutePath}" is outside the MCP file-access allowlist. ` +
+      `Allowed prefixes: ${allowlist.join(', ')}. ` +
+      `Override via the LEDGER_MCP_FILE_ACCESS_ALLOWLIST env var if intentional.`
+    );
+  }
+}
+
+function verifyMismatchResponse(error: VerifyMismatchError) {
+  return errorResponse(
+    `Verify mismatch on document ${error.id}: ` +
+    `pushed ${error.expectedLength} bytes, pulled ${error.actualLength} bytes. ` +
+    `${error.diffPreview}`
+  );
 }
 
 /**
@@ -201,6 +249,44 @@ server.tool(
 );
 
 server.tool(
+  'add_document_from_file',
+  'Create a new document by reading content from an absolute file path on the local FS. Bytes flow disk -> Postgres without string composition (drift-safe). Auto-verified after create: the doc is pulled back and byte-compared against the file we sent. Path must be inside the MCP file-access allowlist.',
+  {
+    path: z.string().describe('Absolute path to the file to ingest. Must be inside the configured allowlist (defaults: ~/.ledger/, ~/repos/, /tmp/ledger-edit/).'),
+    name: z.string().describe('Document name (unique identifier)'),
+    domain: domainEnum.describe('Document domain'),
+    document_type: z.string().describe('Document type (e.g. knowledge-guide, project-status, reference)'),
+    description: z.string().optional().describe('Short description of the document'),
+    project: z.string().optional().describe('Project name'),
+    protection: protectionEnum.optional().describe('Protection level (default: open)'),
+    agent: z.string().optional().describe('Agent creating this document'),
+    status: statusEnum.optional().describe('Document status'),
+  },
+  async (params) => {
+    try {
+      const absolutePath = resolve(expandHome(params.path));
+      assertPathAllowed(absolutePath);
+
+      const result = await createDocumentFromFile(clients, {
+        filePath:      absolutePath,
+        name:          params.name,
+        domain:        params.domain,
+        document_type: params.document_type,
+        description:   params.description,
+        project:       params.project,
+        protection:    params.protection,
+        agent:         params.agent ?? 'mcp',
+        status:        params.status,
+      });
+      return textResponse(`Document created and verified (id: ${result.id}, ${result.bytes} bytes).`);
+    } catch (error) {
+      if (error instanceof VerifyMismatchError) return verifyMismatchResponse(error);
+      return errorResponse((error as Error).message);
+    }
+  }
+);
+
+server.tool(
   'list_documents',
   'List documents from the knowledge base with optional filters. Returns newest first.',
   {
@@ -266,6 +352,36 @@ server.tool(
 
       return textResponse(`Document ${params.id} updated successfully.`);
     } catch (error) {
+      return errorResponse((error as Error).message);
+    }
+  }
+);
+
+server.tool(
+  'update_document_from_file',
+  'Update a document by reading new content from an absolute file path on the local FS. Bytes flow disk -> Postgres without string composition (drift-safe). Auto-verified after push: the doc is pulled back and byte-compared against the file we sent. Path must be inside the MCP file-access allowlist. Respects protection levels.',
+  {
+    id: z.coerce.number().describe('Document ID to update'),
+    path: z.string().describe('Absolute path to the file containing the new content. Must be inside the configured allowlist (defaults: ~/.ledger/, ~/repos/, /tmp/ledger-edit/).'),
+    agent: z.string().optional().describe('Agent performing the update'),
+    confirmed: z.boolean().default(false).describe('Required for protected/guarded documents'),
+  },
+  async (params) => {
+    try {
+      const blocked = await checkProtection(params.id, params.confirmed, 'update');
+      if (blocked) return blocked;
+
+      const absolutePath = resolve(expandHome(params.path));
+      assertPathAllowed(absolutePath);
+
+      const result = await updateDocumentFromFile(clients, {
+        id:       params.id,
+        filePath: absolutePath,
+        agent:    params.agent ?? 'mcp',
+      });
+      return textResponse(`Document ${result.id} updated and verified (${result.bytes} bytes).`);
+    } catch (error) {
+      if (error instanceof VerifyMismatchError) return verifyMismatchResponse(error);
       return errorResponse((error as Error).message);
     }
   }
