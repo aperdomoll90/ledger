@@ -2442,3 +2442,21 @@ Phase 1 only adds new APIs alongside the existing ones. Phases 2-4 (separate bra
 1. Push branch, open PR for Phase 1 review.
 2. After merge, start Phase 2 (cleanup) on a fresh branch.
 3. Continue with Phases 3 and 4 in subsequent sessions.
+
+## Session 47, 2026-05-02 (file-based write API, Phase 2 cleanup)
+
+### What Was Done
+- **Deleted `scripts/push-by-id.mjs`.** Workaround for the ARG_MAX bug shipped earlier in S46-pre, now redundant after the `-f` flag and `_from_file` MCP tools landed in PR #14.
+- **Cross-repo: simplified `~/repos/claude-skills/session-checkpoint/SKILL.md`.** Stripped the size-conditional workflow split (the "Doc under ~50 KB" / "Doc over ~50 KB" fork that pointed to the deleted script). Unified into a single file-based workflow with explicit folder conventions (`~/.ledger/drafts/` for new docs, `~/.ledger/transient/` for pre-implementation specs, `/tmp/ledger-edit/` for transient pull-edit-push). Recovery section updated to drop the push-by-id.mjs reference; new text covers `VerifyMismatchError` handling and CLI-as-fallback.
+- **Cross-repo: added an Autonomy section to the same SKILL.md.** Self-contained in the skill so the rule travels with the repo. Codifies what is pre-authorized when the checkpoint skill is running (routine dashboard / devlog / errorlog updates, commits, pushes, merged-branch cleanup) vs what still requires explicit permission (force ops, unmerged-branch deletes, out-of-scope edits).
+- **Ledger doc (post-merge):** the workaround bullet under `project-status-dashboard` (#29) "Active cross-project work" will be removed and the Ledger card updated to reflect Phases 1 + 2 shipped, Phases 3 + 4 queued.
+
+### Tests
+- Full suite + `tsc --noEmit`: green (no source changes besides the script deletion).
+
+### Commits (S47)
+- TBD (this branch's diff is just the deletion plus this devlog block; the SKILL.md edit lives on the claude-skills repo's main branch).
+
+### Next
+1. **Phase 3 (docs):** update `~/repos/ledger/CLAUDE.md` to describe the file-based write protocol (replacing any prose that still references the `-c` / composed-string paths). Update the Ledger ingestion architecture doc and the general RAG reference doc input section. After Phase 3 lands, the spec at `~/.ledger/transient/ledger-spec-file-based-write-api.md` can be deleted (with explicit user permission, per the transient-spec rule).
+2. **Phase 4 (audit + cutover):** `rg` callers of `mcp__ledger__update_document\(.*content` / `mcp__ledger__add_document\(.*content` and `ledger update -c` / `ledger add -c` across `~/repos/` and `~/.claude/`. Migrate every caller to the `_from_file` variants. Then remove the old paths from `cli.ts`, `commands/update.ts`, `commands/add.ts`, and `mcp-server.ts`. Audit other CLI commands (`tag`, `eval`, etc.) for similar ARG_MAX risk in `-c`-style content flags. Add `--yes` to `ledger delete` for consistency with `update -f --yes`.
