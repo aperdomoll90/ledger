@@ -2,24 +2,12 @@ import { resolve } from 'path';
 import { existsSync } from 'fs';
 import type { LedgerConfig } from '../lib/config.js';
 import type { IClientsProps, Domain, DocumentStatus, Protection } from '../lib/documents/classification.js';
-import { createDocument, createDocumentFromFile, VerifyMismatchError } from '../lib/documents/operations.js';
+import { createDocumentFromFile, VerifyMismatchError } from '../lib/documents/operations.js';
 import { fatal, ExitCode } from '../lib/errors.js';
 
 // =============================================================================
 // Interfaces
 // =============================================================================
-
-export interface IAddDocumentOptionsProps {
-  content:      string;
-  name:         string;
-  domain:       string;
-  documentType: string;
-  project?:     string;
-  description?: string;
-  agent:        string;
-  status?:      string;
-  protection?:  string;
-}
 
 export interface IAddDocumentFromFileOptionsProps {
   filePath:     string;
@@ -34,46 +22,19 @@ export interface IAddDocumentFromFileOptionsProps {
 }
 
 // =============================================================================
-// Commands
+// Command
 // =============================================================================
 
 /**
- * Add a new document by passing content inline as a CLI argument (-c).
+ * Add a new document by reading content from a file on disk. Auto-verified after create.
  *
- * Convenient for short docs but breaks at ~128 KB (Linux ARG_MAX). For larger
- * docs or any case where drift safety matters, use addDocumentFromFile (-f).
- */
-export async function addDocument(config: LedgerConfig, options: IAddDocumentOptionsProps): Promise<void> {
-  const clients: IClientsProps = {
-    supabase: config.supabase,
-    openai:   config.openai,
-  };
-
-  process.stderr.write(`Adding document "${options.name}" (${options.domain}/${options.documentType})...\n`);
-
-  const documentId = await createDocument(clients, {
-    name:          options.name,
-    domain:        options.domain as Domain,
-    document_type: options.documentType,
-    content:       options.content,
-    description:   options.description,
-    project:       options.project,
-    agent:         options.agent,
-    status:        options.status as DocumentStatus | undefined,
-    protection:    options.protection as Protection | undefined,
-  });
-
-  process.stdout.write(`${documentId}\n`);
-  process.stderr.write(`Document created (id: ${documentId})\n`);
-}
-
-/**
- * Add a new document by reading content from a file on disk (-f). Auto-verified after create.
+ * Bytes flow file -> createDocumentFromFile() -> Postgres without retyping.
+ * The composed-string path (`-c`) was removed in Phase 4 of the
+ * file-based-write-api rollout to close the drift class of bug.
  *
- * Bytes flow file -> createDocumentFromFile() -> Postgres, then we pull the new doc
- * back and byte-compare. Drift surfaces as VerifyMismatchError on stderr with
- * exit code VERIFY_MISMATCH; the document still exists (audit_log preserves the
- * create event for manual cleanup if needed).
+ * Drift surfaces as VerifyMismatchError on stderr with exit code VERIFY_MISMATCH.
+ * The document still exists on verify failure (audit_log preserves the create
+ * event for manual cleanup if needed).
  */
 export async function addDocumentFromFile(
   config: LedgerConfig,

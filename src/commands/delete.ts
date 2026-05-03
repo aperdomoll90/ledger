@@ -3,9 +3,14 @@ import { getDocumentById } from '../lib/documents/fetching.js';
 import { deleteDocument as deleteDocumentOperation } from '../lib/documents/operations.js';
 import { confirm } from '../lib/prompt.js';
 
+interface IRemoveOptionsProps {
+  yes?: boolean;
+}
+
 export async function removeDocument(
   config: LedgerConfig,
   id: number,
+  options: IRemoveOptionsProps = {},
 ): Promise<void> {
   const document = await getDocumentById(config.supabase, id);
 
@@ -24,11 +29,12 @@ export async function removeDocument(
   console.error(`Protection: ${document.protection}`);
   console.error(`Content preview: ${document.content.slice(0, 200)}${document.content.length > 200 ? '...' : ''}`);
 
-  const proceed = await confirm('\nProceed with deletion?');
-
-  if (!proceed) {
-    console.error('Cancelled.');
-    return;
+  if (!options.yes) {
+    const proceed = await confirm('\nProceed with deletion?');
+    if (!proceed) {
+      console.error('Cancelled.');
+      return;
+    }
   }
 
   await deleteDocumentOperation({ supabase: config.supabase, openai: config.openai }, id, 'cli');
