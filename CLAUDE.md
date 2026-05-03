@@ -71,11 +71,11 @@ rm ~/.ledger/drafts/<name>.md   # cleanup on success
   - `~/.ledger/transient/` pre-implementation specs / plans / research (LOCAL ONLY, never pushed)
   - `/tmp/ledger-edit/` transient pull-edit-push for existing docs
 
-### Deprecated paths
+### Removed paths
 
-The composed-string write paths still exist but are scheduled for removal in Phase 4 of the file-based-write-api rollout:
+The composed-string write paths are gone (Phase 4 cutover, 2026-05-02):
 
-- CLI: `ledger update -c <body>`, `ledger add -c <body>`. Break at ~128 KB (ARG_MAX).
-- MCP: `mcp__ledger__update_document(id, content)`, `mcp__ledger__add_document(content, ...)`. Drift-prone (the agent retypes the doc body into a JSON parameter; any silent mutation slips through).
+- ~~CLI: `ledger update -c <body>`, `ledger add -c <body>`~~. Removed; both commands now require `-f <file>`.
+- ~~MCP: `mcp__ledger__update_document(id, content)`, `mcp__ledger__add_document(content, ...)`~~. Removed; only `_from_file` variants remain.
 
-Do not use these for new code. Migrate any existing call sites to the `_from_file` variants.
+The deprecated note-era wrappers (`add_note`, `update_note`, `update_metadata`, etc.) still exist for backward compatibility but are out-of-scope for the file-based-write-api rollout and remain inline-content. They will be removed in a separate housekeeping pass.

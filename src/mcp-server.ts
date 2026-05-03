@@ -217,38 +217,6 @@ server.tool(
 );
 
 server.tool(
-  'add_document',
-  'Create a new document in the knowledge base. Content is automatically chunked and embedded for search.',
-  {
-    name: z.string().describe('Document name (unique identifier)'),
-    domain: domainEnum.describe('Document domain'),
-    document_type: z.string().describe('Document type (e.g. knowledge-guide, project-status, reference)'),
-    content: z.string().describe('Document content'),
-    description: z.string().optional().describe('Short description of the document'),
-    project: z.string().optional().describe('Project name'),
-    protection: protectionEnum.optional().describe('Protection level (default: open)'),
-    owner_type: ownerTypeEnum.optional().describe('Owner type (default: user)'),
-    owner_id: z.string().optional().describe('Owner identifier'),
-    is_auto_load: z.boolean().optional().describe('Auto-load into agent context on session start'),
-    source_type: sourceTypeEnum.optional().describe('Source content type (default: text)'),
-    source_url: z.string().optional().describe('URL of original source'),
-    file_path: z.string().optional().describe('Local file path for sync'),
-    file_permissions: z.string().optional().describe('File permissions string'),
-    agent: z.string().optional().describe('Agent creating this document'),
-    status: statusEnum.optional().describe('Document status'),
-    skill_ref: z.string().optional().describe('Reference to associated skill'),
-  },
-  async (params) => {
-    try {
-      const documentId = await createDocument(clients, params);
-      return textResponse(`Document created successfully (id: ${documentId})`);
-    } catch (error) {
-      return errorResponse((error as Error).message);
-    }
-  }
-);
-
-server.tool(
   'add_document_from_file',
   'Create a new document by reading content from an absolute file path on the local FS. Bytes flow disk -> Postgres without string composition (drift-safe). Auto-verified after create: the doc is pulled back and byte-compared against the file we sent. Path must be inside the MCP file-access allowlist.',
   {
@@ -320,37 +288,6 @@ server.tool(
       });
 
       return textResponse(`${documents.length} document(s):\n\n${formatted.join('\n\n')}`);
-    } catch (error) {
-      return errorResponse((error as Error).message);
-    }
-  }
-);
-
-server.tool(
-  'update_document',
-  'Update a document\'s content. Triggers re-chunking and re-embedding. Respects protection levels.',
-  {
-    id: z.coerce.number().describe('Document ID to update'),
-    content: z.string().describe('New content'),
-    agent: z.string().optional().describe('Agent performing the update'),
-    description: z.string().optional().describe('Updated description'),
-    status: statusEnum.optional().describe('Updated status'),
-    confirmed: z.boolean().default(false).describe('Required for protected/guarded documents'),
-  },
-  async (params) => {
-    try {
-      const blocked = await checkProtection(params.id, params.confirmed, 'update');
-      if (blocked) return blocked;
-
-      await updateDocument(clients, {
-        id: params.id,
-        content: params.content,
-        agent: params.agent,
-        description: params.description,
-        status: params.status,
-      });
-
-      return textResponse(`Document ${params.id} updated successfully.`);
     } catch (error) {
       return errorResponse((error as Error).message);
     }

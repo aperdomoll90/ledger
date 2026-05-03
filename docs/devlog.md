@@ -2490,3 +2490,44 @@ All three Ledger doc pushes verified clean by the helper itself: #137 20,655 byt
 1. Phase 3 PR review + merge.
 2. **Delete the transient spec** at `~/.ledger/transient/ledger-spec-file-based-write-api.md` after Phase 3 merges (with explicit user permission, per the transient-spec rule). The durable docs now carry the protocol description; the spec has fulfilled its purpose.
 3. **Phase 4 (audit + cutover):** unchanged from S47's devlog. Still pending.
+
+## Session 49, 2026-05-02 (file-based write API, Phase 4 cutover)
+
+### Audit findings
+Filtered ripgrep across `~/repos/` and `~/.claude/` (excluding transcripts, file-history, and devlog buffers): **zero real code callers** of the deprecated APIs outside the Ledger repo itself. References to `mcp__ledger__update_document` / `add_document` / `ledger update -c` / `ledger add -c` exist only in:
+- `~/.claude/settings.local.json` (permission grants).
+- `~/repos/ledger/CLAUDE.md` (the deprecated-paths note added in Phase 3 / S48).
+- `~/repos/claude-skills/session-checkpoint/SKILL.md` (advisory paragraph).
+- `~/.claude/projects/-home-adrian/memory/feedback_never_bypass_rpc.md` (stale "via a script" workaround instruction).
+Devlogs and Ledger docs are historical mentions; not callers.
+
+Phase 4 acceptance criterion "audit other CLI commands for similar ARG_MAX risk in `-c`-style flags" returned no other matches. Only `ledger add -c` and `ledger update -c` carried content; both are removed in this PR.
+
+### What Was Done
+- **CLI: removed `-c` flag from `ledger update <id>` and `ledger add`.** Both commands now require `-f <file>`. The previously-paired inline-content handlers (`update()` and `addDocument()`) deleted from `commands/update.ts` and `commands/add.ts`; only the `_from_file` handlers remain. `cli.ts` simplified to drop the mutual-exclusion validation since `-f` is now `requiredOption`.
+- **CLI: added `-y/--yes` flag to `ledger delete <id>`** for consistency with `update -f --yes`. `commands/delete.ts` gained the same `IRemoveOptionsProps` shape as the update command. Surfaced as a Phase 4 housekeeping item during the S46 smoke test.
+- **MCP: removed `update_document` and `add_document` tool registrations** from `mcp-server.ts`. The TypeScript `updateDocument()` / `createDocument()` library functions are kept (still used by the `_from_file` helpers and the deprecated note-era wrappers `add_note` / `update_note`); only the composed-string MCP tool wrappers are gone.
+- **Tests: `mcp-server.test.ts`** updated to reflect the new tool count: 16 (10 + 6) instead of 18 (12 + 6). Tool list updated to drop `update_document` / `add_document`. Full suite still green at 240 / 240.
+- **Settings: `~/.claude/settings.local.json`** permission grants updated. Removed grants for `mcp__ledger__update_document` and `mcp__ledger__add_document`; added grants for `mcp__ledger__update_document_from_file` and `mcp__ledger__add_document_from_file`. Charlie's permissions match the new API surface.
+- **Memory rule updated.** `~/.claude/projects/-home-adrian/memory/feedback_never_bypass_rpc.md` "How to apply" stanza rewritten to reference the file-based variants instead of the now-gone "via a script" workaround.
+- **Cross-repo: `claude-skills/session-checkpoint/SKILL.md`** advisory rewritten. The "if you ever find yourself about to call the composed-string tools, stop and use _from_file" prose was advisory in PR #15. With the composed-string tools now structurally absent, the advisory becomes a brief past-tense note explaining the constraint rather than a redirect.
+- **Local CLAUDE.md** "Deprecated paths" subsection rewritten as "Removed paths" with strikethrough markers. The note-era wrappers (`add_note`, `update_note`, etc.) are explicitly called out as out-of-scope for this PR.
+- **Ledger architecture doc updates** pushed via `ledger update -f --yes` (the new helper, dogfooded again):
+  - `ledger-architecture` (#137): four "18 tools" references reverted to "16 tools" (3 search + 5 CRUD + 2 read + 6 deprecated). The CRUD line in the tools table dropped `add_document` and `update_document`. The follow-up paragraph rewritten to past tense ("were removed in Phase 4 ... 2026-05-02") and explains that the structural fix is now baked into the API surface.
+  - `ledger-architecture-mcp-tools` (#141): lede 18/12 -> 16/10. The `add_document` and `update_document` entries (with their full param tables) deleted entirely; the doc no longer lists tools that don't exist. The remaining `_from_file` entries lost the "(preferred)" suffix since they are now the only option.
+  - `ledger-architecture-typescript` (#140): project-structure note `(18 tools)` -> `(16 tools; write surface is _from_file only)`. mcp-server.test.ts row "18 tools registered" -> "16 tools registered".
+
+### Tests
+- `tsc --noEmit`: clean.
+- `npm test`: 240 / 240 green, 3 skipped (unchanged from S46 baseline).
+
+### Commits (S49)
+- TBD (single commit covers CLI + MCP + tests + local docs + memory rule + cross-repo SKILL.md edit; the three Ledger doc pushes verified clean by the helper).
+
+### Next
+1. Phase 4 PR review + merge.
+2. Post-merge: dashboard #29 bumped to mark file-based-write-api fully shipped (Phases 1-4 done).
+3. **Delete the transient spec** at `~/.ledger/transient/ledger-spec-file-based-write-api.md` (with explicit user permission). All four phases have shipped; the spec has fulfilled its purpose and the durable docs carry the protocol description.
+4. Optional follow-up housekeeping passes (separate PRs):
+  - Remove the deprecated note-era wrappers (`add_note`, `update_note`, `update_metadata`, etc.). They were already deprecated before this rollout and still take inline `content`. Out of scope for the file-based-write-api work but a natural next cleanup.
+  - Stale test counts and CLI command lists in #140 and #141 that don't relate to the write surface.
