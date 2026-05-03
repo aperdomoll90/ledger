@@ -3,9 +3,11 @@
 // Each function prepares data (chunk, embed, hash) then calls a Postgres RPC function.
 // The database handles transactions (document + chunks + audit = atomic).
 
-import type { IClientsProps, ICreateDocumentProps, IUpdateDocumentProps, IUpdateFieldsProps, IChunkConfigProps } from './classification.js';
+import { readFileSync } from 'fs';
+import type { IClientsProps, ICreateDocumentProps, IUpdateDocumentProps, IUpdateFieldsProps, IChunkConfigProps, Domain, DocumentStatus, Protection } from './classification.js';
 import { contentHash, chunkText, generateEmbeddingsBatch, toVectorString } from '../search/embeddings.js';
 import { generateContextSummaries } from '../search/chunk-context-enrichment.js';
+import { getDocumentById } from './fetching.js';
 import { startTrace, startSpan } from '../observability.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
@@ -232,4 +234,163 @@ export async function restoreDocument(
   });
 
   if (error) throw new Error(`Failed to restore document #${id}: ${error.message}`);
+}
+
+// =============================================================================
+// File-based write helpers
+// =============================================================================
+// Wrap createDocument / updateDocument with read-from-disk + post-push auto-verify.
+// The file path is the source of truth: bytes go from disk to DB without ever
+// being retyped or composed as a string parameter (closes the drift class of bug
+// where MCP / CLI callers reproduce content as JSON / argv text and silently mutate it).
+//
+// After every write, we pull the doc back via getDocumentById and byte-compare against
+// the file we sent. Mismatch throws VerifyMismatchError with a diff preview locating
+// the first divergence. We never rollback (audit_log is the manual undo path).
+
+export interface IFromFileResultProps {
+  id:       number;
+  verified: true;
+  bytes:    number;
+}
+
+export interface IUpdateFromFileProps {
+  id:       number;
+  filePath: string;
+  agent:    string;
+}
+
+export interface ICreateFromFileProps {
+  filePath:      string;
+  name:          string;
+  domain:        Domain;
+  document_type: string;
+  description?:  string;
+  project?:      string;
+  agent:         string;
+  status?:       DocumentStatus;
+  protection?:   Protection;
+}
+
+/**
+ * Thrown when the post-push verify pull-back does not byte-match the file we sent.
+ * Carries the document id, both byte counts, and a single-line diff preview that
+ * locates the first divergence (line / col / expected snippet / actual snippet).
+ *
+ * Caller decides how to surface this. CLI prints to stderr and exits non-zero;
+ * MCP returns it as an error result. Neither path attempts to rollback.
+ */
+export class VerifyMismatchError extends Error {
+  constructor(
+    public readonly id:             number,
+    public readonly expectedLength: number,
+    public readonly actualLength:   number,
+    public readonly diffPreview:    string,
+  ) {
+    super(`Verify mismatch on document ${id}: pushed ${expectedLength} bytes, pulled ${actualLength} bytes. ${diffPreview}`);
+    this.name = 'VerifyMismatchError';
+  }
+}
+
+// Locate the first byte at which two strings differ and produce a one-line preview
+// in the form: `line L, col C: expected '<snippet>' but got '<snippet>'`.
+// Returns null when the strings are byte-identical.
+function buildDiffPreview(expected: string, actual: string): string | null {
+  if (expected === actual) return null;
+
+  const minLength = Math.min(expected.length, actual.length);
+  let diffIndex = minLength;
+  for (let cursor = 0; cursor < minLength; cursor++) {
+    if (expected[cursor] !== actual[cursor]) {
+      diffIndex = cursor;
+      break;
+    }
+  }
+
+  let line = 1;
+  let col = 1;
+  for (let cursor = 0; cursor < diffIndex; cursor++) {
+    if (expected[cursor] === '\n') { line++; col = 1; }
+    else { col++; }
+  }
+
+  const SNIPPET_LENGTH = 40;
+  const escape = (snippet: string) => snippet.replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+  const expectedSnippet = escape(expected.slice(diffIndex, diffIndex + SNIPPET_LENGTH));
+  const actualSnippet   = escape(actual.slice(diffIndex, diffIndex + SNIPPET_LENGTH));
+
+  return `line ${line}, col ${col}: expected '${expectedSnippet}' but got '${actualSnippet}'`;
+}
+
+// Pull the document back and byte-compare against the bytes we just wrote.
+// Throws VerifyMismatchError if the DB returned different bytes than we sent
+// (drift / pipeline transformation / concurrent write all manifest the same way).
+async function verifyAfterWrite(
+  clients:      IClientsProps,
+  id:           number,
+  expectedBody: string,
+): Promise<void> {
+  const pulled = await getDocumentById(clients.supabase, id);
+
+  if (!pulled) {
+    throw new VerifyMismatchError(id, expectedBody.length, 0,
+      'document not found during verify (deleted between write and verify, or wrong id)');
+  }
+
+  const diffPreview = buildDiffPreview(expectedBody, pulled.content);
+  if (diffPreview !== null) {
+    throw new VerifyMismatchError(id, expectedBody.length, pulled.content.length, diffPreview);
+  }
+}
+
+/**
+ * Update a document by reading its new content from a file on disk, then verify the write.
+ *
+ * Pipeline:
+ * 1. Read file from `filePath` (utf8). Surfaces fs errors (ENOENT, EACCES) as-is.
+ * 2. Call updateDocument() with the file bytes as content.
+ * 3. Pull the document back and byte-compare against what we wrote.
+ * 4. On match: return { id, verified, bytes }. On mismatch: throw VerifyMismatchError.
+ *
+ * The file is never trimmed, normalized, or transformed — bytes-in equals bytes-out.
+ */
+export async function updateDocumentFromFile(
+  clients: IClientsProps,
+  props:   IUpdateFromFileProps,
+): Promise<IFromFileResultProps> {
+  const body = readFileSync(props.filePath, 'utf8');
+
+  await updateDocument(clients, { id: props.id, content: body, agent: props.agent });
+  await verifyAfterWrite(clients, props.id, body);
+
+  return { id: props.id, verified: true, bytes: body.length };
+}
+
+/**
+ * Create a new document by reading its content from a file on disk, then verify the write.
+ *
+ * Same shape as updateDocumentFromFile: read file, call createDocument(), pull-back, byte-compare.
+ * On mismatch the new document still exists; caller decides whether to delete it (audit_log
+ * preserves the create event for manual cleanup).
+ */
+export async function createDocumentFromFile(
+  clients: IClientsProps,
+  props:   ICreateFromFileProps,
+): Promise<IFromFileResultProps> {
+  const body = readFileSync(props.filePath, 'utf8');
+
+  const id = await createDocument(clients, {
+    name:          props.name,
+    domain:        props.domain,
+    document_type: props.document_type,
+    content:       body,
+    description:   props.description,
+    project:       props.project,
+    agent:         props.agent,
+    status:        props.status,
+    protection:    props.protection,
+  });
+  await verifyAfterWrite(clients, id, body);
+
+  return { id, verified: true, bytes: body.length };
 }

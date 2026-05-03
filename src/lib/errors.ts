@@ -17,6 +17,8 @@ export enum ExitCode {
   EMBEDDING_ERROR = 5,
   CONFLICT = 6,
   INVALID_INPUT = 7,
+  PROTECTED = 8,
+  VERIFY_MISMATCH = 9,
 }
 
 export function fatal(message: string, code: ExitCode = ExitCode.GENERAL_ERROR): never {
