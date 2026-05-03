@@ -2402,3 +2402,43 @@ Added automated pipeline observability to Ledger using self-hosted Langfuse. Eve
    - Query-type-aware boosting (exact-term queries should weight keyword higher)
 2. Phase 4.7: Multi-format ingestion (deferred)
 3. Move `ledger-spec-embeddings` (#24) out of Ledger corpus or restructure
+
+## Session 46, 2026-05-02 (file-based write API, Phase 1)
+
+### What Was Done
+- **New branch `feat/file-based-write-api`** off main. Closes Ledger Next #1 (CLI `-f` flag) and the related drift-prone composed-string write path that bit us on a master-dashboard push earlier the same day.
+- **Library: file-based write helpers in `src/lib/documents/operations.ts`.** Two new functions plus a typed error class:
+  - `updateDocumentFromFile({ id, filePath, agent })` reads the file from disk, calls `updateDocument()`, then runs an auto-verify pull-back via `getDocumentById()` and byte-compares the pulled content against what we sent.
+  - `createDocumentFromFile({ filePath, name, domain, document_type, ... })` mirror for new docs.
+  - `VerifyMismatchError` carries `id`, `expectedLength`, `actualLength`, and a `diffPreview` string formatted as `line L, col C: expected '<snippet>' but got '<snippet>'` so the caller can pinpoint where drift happened. `\n` and `\t` are escaped in the snippet so the preview stays one line.
+  - Internal `buildDiffPreview()` finds the first byte where strings diverge and computes line / col in the expected string.
+  - Internal `verifyAfterWrite()` is the shared pull-back-and-diff routine.
+- **Tests: 6 new in `tests/document-operations-from-file.test.ts`.** Happy update, drift throws, drift-error-shape, unicode + emoji + edge whitespace byte-exactness, ENOENT propagation, happy create. The `>200 KB` regression test was deferred to CLI integration tests with an explanatory comment in the test file. Reason: the singleton `openaiLimiter` (Bottleneck, `minTime: 100 ms`) chunks 250 KB into 250 calls, queues them, and starves every subsequent test in the file. The bug we are fixing is in argv-passing, not the DB pipeline, so the unit-level helper test does not need 250 KB content to be meaningful.
+- **CLI: `-f` flag on `ledger update <id>` and `ledger add`.** Both commands accept either `-c <content>` or `-f <file>`, mutually exclusive, exactly one required. `update` adds `-y` / `--yes` to skip the interactive confirm prompt for non-interactive scripts. The `-f` path renders the same preview the `-c` path does and goes through the same `confirm()` gate by default. Exit codes: `INVALID_INPUT` (7) for flag-validation errors, `VERIFY_MISMATCH` (9) for round-trip diff failures.
+- **MCP: `update_document_from_file` and `add_document_from_file` tools** registered in `src/mcp-server.ts`, alongside the existing composed-string variants. Both accept an absolute path, gate it through an FS-access allowlist, and surface `VerifyMismatchError` as a structured MCP error response with the diff preview embedded.
+- **MCP file-access allowlist.** Default prefixes: `~/.ledger/`, `~/repos/`, `/tmp/ledger-edit/`. Override via env var `LEDGER_MCP_FILE_ACCESS_ALLOWLIST` (colon-separated). The override REPLACES defaults rather than extending them, so an explicit override is strictly enforced. Defense-in-depth, not a hard sandbox: the MCP server runs with the user's permissions and agents already have FS access via the Read tool. The allowlist stops accidental wrong-path pushes from silently succeeding through the Ledger pipeline.
+- **`ExitCode` enum extended** in `src/lib/errors.ts`: added `PROTECTED = 8` and `VERIFY_MISMATCH = 9`.
+- **`tests/mcp-server.test.ts` updated** to reflect the new tool count: 18 total (12 new + 6 deprecated, was 16 / 10 + 6).
+
+### Pipeline Property Surfaced
+- The `openaiLimiter` (Bottleneck) is a process-wide singleton. Tests that fan out to many chunks queue work that starves every later test in the same vitest process. Worth knowing for anyone adding a "large content" unit test in the future.
+
+### Tests
+- Helper tests: 6 / 6 green.
+- Full suite after each commit: 240 / 240 green (3 pre-existing skips), `tsc --noEmit` clean.
+
+### Commits (S46)
+- `363a6d3` library helpers + 6 tests.
+- `a05ed19` CLI wiring + ExitCode additions.
+- `2fc9c77` MCP tools + allowlist + tool-count test update.
+
+### What Is NOT in Phase 1
+Phase 1 only adds new APIs alongside the existing ones. Phases 2-4 (separate branch / sessions):
+- **Phase 2 cleanup:** delete `~/repos/ledger/scripts/push-by-id.mjs`, strip the "Doc over ~50 KB" paragraph from `session-checkpoint/SKILL.md`, strip the workaround bullet from `project-status-dashboard` (#29) "Active cross-project work".
+- **Phase 3 documentation:** update `~/repos/ledger/CLAUDE.md`, the Ledger ingestion architecture doc, and the RAG reference doc input section with the new write protocol.
+- **Phase 4 audit + cutover:** grep callers of `update_document(content=)` and `add_document(content=)` across `~/repos/` and `~/.claude/`, migrate to `_from_file` variants, then remove `-c` from the CLI commands and the composed-string MCP tools. Audit other CLI commands for similar ARG_MAX risk in `-c`-style flags.
+
+### Next
+1. Push branch, open PR for Phase 1 review.
+2. After merge, start Phase 2 (cleanup) on a fresh branch.
+3. Continue with Phases 3 and 4 in subsequent sessions.
