@@ -19,13 +19,13 @@ const { version } = require('../package.json');
 
 // Commands
 import { init } from './commands/init.js';
-import { addDocument } from './commands/add.js';
+import { addDocument, addDocumentFromFile } from './commands/add.js';
 import { list } from './commands/list.js';
 import { show } from './commands/show.js';
 import { get } from './commands/get.js';
 import { exportDocument } from './commands/export.js';
 import { push } from './commands/push.js';
-import { update } from './commands/update.js';
+import { update, updateFromFile } from './commands/update.js';
 import { removeDocument } from './commands/delete.js';
 import { tag } from './commands/tag.js';
 import { check } from './commands/check.js';
@@ -60,8 +60,9 @@ program
 
 program
   .command('add')
-  .description('Add a new document to Ledger')
-  .requiredOption('-c, --content <content>', 'document content')
+  .description('Add a new document to Ledger (use -c for inline content or -f for a file path)')
+  .option('-c, --content <content>', 'document content (breaks at ~128 KB ARG_MAX; prefer -f for larger docs)')
+  .option('-f, --file <file>', 'read document content from a file on disk; auto-verified after create')
   .requiredOption('-n, --name <name>', 'unique document name (lowercase, hyphens)')
   .option('-d, --domain <domain>', 'domain: system, persona, workspace, project, general', 'general')
   .option('-t, --type <type>', 'document type (architecture, reference, knowledge, etc.)', 'knowledge')
@@ -71,7 +72,30 @@ program
   .option('-s, --status <status>', 'status: idea, planning, active, done')
   .option('--protection <level>', 'protection: open, guarded, protected, immutable')
   .action(async (options) => {
+    if (!options.content && !options.file) {
+      console.error('Error: one of -c/--content or -f/--file is required.');
+      process.exit(7);
+    }
+    if (options.content && options.file) {
+      console.error('Error: -c/--content and -f/--file are mutually exclusive.');
+      process.exit(7);
+    }
+
     const config = loadConfig(CLI_CONTEXT);
+    if (options.file) {
+      await addDocumentFromFile(config, {
+        filePath: options.file,
+        name: options.name,
+        domain: options.domain,
+        documentType: options.type,
+        project: options.project,
+        description: options.description,
+        agent: options.agent,
+        status: options.status,
+        protection: options.protection,
+      });
+      return;
+    }
     await addDocument(config, {
       content: options.content,
       name: options.name,
@@ -137,11 +161,27 @@ program
 
 program
   .command('update <id>')
-  .description('Update a document by ID')
-  .requiredOption('-c, --content <content>', 'new content')
+  .description('Update a document by ID (use -c for inline content or -f for a file path)')
+  .option('-c, --content <content>', 'new content (breaks at ~128 KB ARG_MAX; prefer -f for larger docs)')
+  .option('-f, --file <file>', 'read new content from a file on disk; auto-verified after push')
+  .option('-y, --yes', 'skip the interactive confirmation prompt (for non-interactive scripts)')
   .action(async (documentId, options) => {
+    if (!options.content && !options.file) {
+      console.error('Error: one of -c/--content or -f/--file is required.');
+      process.exit(7);
+    }
+    if (options.content && options.file) {
+      console.error('Error: -c/--content and -f/--file are mutually exclusive.');
+      process.exit(7);
+    }
+
     const config = loadConfig(CLI_CONTEXT);
-    await update(config, parseInt(documentId, 10), options.content);
+    const id = parseInt(documentId, 10);
+    if (options.file) {
+      await updateFromFile(config, id, options.file, { yes: options.yes });
+      return;
+    }
+    await update(config, id, options.content, { yes: options.yes });
   });
 
 program
