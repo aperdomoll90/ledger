@@ -1,0 +1,86 @@
+#!/bin/bash
+# Block reading or writing sensitive files
+INPUT=$(cat)
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+
+if [[ -z "$FILE_PATH" ]]; then
+  exit 0
+fi
+
+FILENAME=$(basename "$FILE_PATH")
+
+# Block .env files (all variants)
+if [[ "$FILENAME" =~ ^\.env($|\.) ]]; then
+  echo "BLOCKED: .env files must never be read or written. Check existence with 'test -f .env' or 'wc -l .env'." >&2
+  exit 2
+fi
+
+# Block credential/secret files
+case "$FILENAME" in
+  credentials.json|service-account.json|token.json|secrets.json|auth.json)
+    echo "BLOCKED: $FILENAME contains credentials. Do not read or write directly." >&2
+    exit 2
+    ;;
+  .npmrc|.netrc)
+    echo "BLOCKED: $FILENAME may contain auth tokens. Do not read or write directly." >&2
+    exit 2
+    ;;
+  mcp.json)
+    echo "BLOCKED: Do not edit mcp.json directly. Use 'claude mcp add -s user <name> -- <command>' instead." >&2
+    exit 2
+    ;;
+esac
+
+# Block by extension (keys, certs)
+case "$FILENAME" in
+  *.pem|*.key|*.p12|*.pfx)
+    echo "BLOCKED: $FILENAME is a key/certificate file. Do not read or write." >&2
+    exit 2
+    ;;
+esac
+
+# Block SSH keys
+if [[ "$FILE_PATH" =~ /.ssh/ ]] && [[ "$FILENAME" == id_* || "$FILENAME" == *.pub ]]; then
+  echo "BLOCKED: SSH keys must never be read. Check existence with 'test -f'." >&2
+  exit 2
+fi
+
+# Block AWS credentials
+if [[ "$FILE_PATH" =~ /.aws/credentials ]]; then
+  echo "BLOCKED: AWS credentials must never be read directly." >&2
+  exit 2
+fi
+
+# Block .md file creation — knowledge lives in Ledger, not in local files
+# Allowed exceptions: README.md, CLAUDE.md, MEMORY.md, devlog.md, CHANGELOG.md
+# Also allowed: plugin files under ~/.claude/plugins/
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
+if [[ "$TOOL_NAME" == "Write" ]] && [[ "$FILENAME" == *.md ]]; then
+  # Allow all .md files under plugins, skills, and superpowers output directories
+  if [[ "$FILE_PATH" =~ $HOME/.claude/plugins/ ]] || [[ "$FILE_PATH" =~ $HOME/.claude/skills/ ]]; then
+    exit 0
+  fi
+  # Allow superpowers brainstorming specs and planning reports
+  if [[ "$FILE_PATH" =~ /docs/superpowers/ ]]; then
+    exit 0
+  fi
+  # Allow memory cache files (feedback, user, reference prefixed) in the memory directory
+  MEMORY_DIR="$HOME/.claude/projects/-home-adrian/memory"
+  DIR_PATH=$(dirname "$FILE_PATH")
+
+  case "$FILENAME" in
+    README.md|CLAUDE.md|MEMORY.md|devlog.md|CHANGELOG.md|SKILL.md) ;;
+    feedback_*.md|user_*.md|reference_*.md|project_*.md)
+      if [[ "$DIR_PATH" != "$MEMORY_DIR" ]]; then
+        echo "BLOCKED: Cache files (feedback_*, user_*, reference_*, project_*) only allowed in $MEMORY_DIR" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      echo "BLOCKED: Do not create .md files locally. Write to Ledger instead using add_note or update_note. Allowed: README.md, CLAUDE.md, MEMORY.md, devlog.md, and cache files in memory dir." >&2
+      exit 2
+      ;;
+  esac
+fi
+
+exit 0
