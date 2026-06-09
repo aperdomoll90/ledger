@@ -54,6 +54,8 @@
 - [feedback_shopify_block_name_25char_limit.md](feedback_shopify_block_name_25char_limit.md) — Shopify section schema `blocks[].name` is capped at 25 chars; theme-check doesn't flag it but `shopify theme push` rejects with "Invalid block: name is too long (max 25 characters)"
 - [feedback_svg_composited_layer_repaint.md](feedback_svg_composited_layer_repaint.md) — SVG stroke-dashoffset updates inside a transformed/composited ancestor are skipped by Chrome's compositor (DevTools-search makes it work); two-part fix is `setAttribute` over `style.X` plus `transform: translateZ(0)` on the SVG to promote it to its own layer
 - [feedback_no_obvious_comments.md](feedback_no_obvious_comments.md) — don't pad code with comments that restate what declarations / identifiers already say; only comment non-obvious WHY
+- [feedback_ledger_devlog_mirror_minimal.md](feedback_ledger_devlog_mirror_minimal.md) — per-project Ledger devlog mirrors are one-line-per-session checkpoints; repo `docs/devlog.md` is canonical for narrative; never paste session bodies into the Ledger mirror
+- [feedback_dashboard_is_board_not_journal.md](feedback_dashboard_is_board_not_journal.md) — `project-status-dashboard` #29 is a glanceable status board with pointers; each card ~40 lines max, total under 15 KB; narrative goes to repo devlog. Run `wc -c` pre-push and ABORT if over.
 
 ## Projects
 - [project_starbrite_consolidation.md](project_starbrite_consolidation.md) — Starbrite redesign consolidates instincts.starbrite.com + www.starbrite.com into one Shopify store; design system covers editorial + commerce
