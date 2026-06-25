@@ -14,6 +14,7 @@
 - [feedback_session_briefing.md](feedback_session_briefing.md) — invoke dawn skill at session start, never skip briefing
 - [feedback_architecture_docs_structure.md](feedback_architecture_docs_structure.md) — architecture docs need visual diagrams (architecture, flowchart, sequence, ERD, DFD)
 - [feedback_never_bypass_rpc.md](feedback_never_bypass_rpc.md) — never direct .update() on documents table, always use RPC functions
+- [feedback_ledger_canonical_not_local_mirror.md](feedback_ledger_canonical_not_local_mirror.md) — canonical tracked docs (timecard, dashboard, devlog) live IN Ledger; never edit stale `~/.ledger/` local copies as canonical; search Ledger by name first
 - [feedback_dashboard_non_negotiable.md](feedback_dashboard_non_negotiable.md) — project-status-dashboard updated every checkpoint, never optional
 - [feedback_production_grade_solutions.md](feedback_production_grade_solutions.md) — always recommend industry-standard, production-grade solutions
 - [feedback_explain_acronyms.md](feedback_explain_acronyms.md) — always explain acronyms and tech terms, Adrian is learning RAG
@@ -56,6 +57,10 @@
 - [feedback_no_obvious_comments.md](feedback_no_obvious_comments.md) — don't pad code with comments that restate what declarations / identifiers already say; only comment non-obvious WHY
 - [feedback_ledger_devlog_mirror_minimal.md](feedback_ledger_devlog_mirror_minimal.md) — per-project Ledger devlog mirrors are one-line-per-session checkpoints; repo `docs/devlog.md` is canonical for narrative; never paste session bodies into the Ledger mirror
 - [feedback_dashboard_is_board_not_journal.md](feedback_dashboard_is_board_not_journal.md) — `project-status-dashboard` #29 is a glanceable status board with pointers; each card ~40 lines max, total under 15 KB; narrative goes to repo devlog. Run `wc -c` pre-push and ABORT if over.
+- [feedback_pp_store_means_preprod.md](feedback_pp_store_means_preprod.md) — in Starbrite work "pp store" = preprod (starbrite-preprod.myshopify.com), NOT perdomo-studio-dev; "pp" abbreviates "pre-prod"
+- [feedback_simplest_solution_no_looping.md](feedback_simplest_solution_no_looping.md) — minimal fix on visual/CSS work; don't over-engineer or loop; confirm target after 1-2 failed tries; revert fully when asked
+- [feedback_email_signature.md](feedback_email_signature.md) — end every email draft with "Best, / Adrian Perdomo / Perdomo Studio" verbatim
+- [feedback_announce_before_editing.md](feedback_announce_before_editing.md) — announce + get approval before edits; read/analyze freely; one approval = one scope; client/prod changes always explicit
 
 ## Projects
 - [project_starbrite_consolidation.md](project_starbrite_consolidation.md) — Starbrite redesign consolidates instincts.starbrite.com + www.starbrite.com into one Shopify store; design system covers editorial + commerce
@@ -63,3 +68,5 @@
 - [project_starbrite_client_provided_files.md](project_starbrite_client_provided_files.md) — Plytix CSV and Star Tron Brand Voice doc in base research are client-provided; treat as authoritative client inputs, not our research output
 - [project_starbrite_contacts.md](project_starbrite_contacts.md) — current Starbrite POCs are Turner Burwick + Bob (since 2026-05-04); Kouri Carey no longer active; invoices stay name-free
 - [project_starbrite_stores.md](project_starbrite_stores.md) — Shopify stores: Adrian's dev (perdomo-studio-dev) for development; client (starbritedev) for archive pull + eventual push, staff access pending
+- [project_starbrite_metaobject_ownership.md](project_starbrite_metaobject_ownership.md) — prod metaobjects owned by `Shopify Claude Connector App` (claude.ai App Store integration). Preprod blocks CLI's connector from `metaobjectDefinitionCreate` for ANY type; need Custom App via admin or hand to Kouri. Sandbox permissive.
+- [project_freelance_tax_2026.md](project_freelance_tax_2026.md) — 2026 freelance tax tracking; Q2 paid 2026-06-15 ($2,500, conf 222-6566-7589-6445); tax system design paused at Section 1; transient specs at `~/.ledger/transient/2026-06-14-freelance-tax-prep/`

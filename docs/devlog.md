@@ -2531,3 +2531,89 @@ Phase 4 acceptance criterion "audit other CLI commands for similar ARG_MAX risk 
 4. Optional follow-up housekeeping passes (separate PRs):
   - Remove the deprecated note-era wrappers (`add_note`, `update_note`, `update_metadata`, etc.). They were already deprecated before this rollout and still take inline `content`. Out of scope for the file-based-write-api work but a natural next cleanup.
   - Stale test counts and CLI command lists in #140 and #141 that don't relate to the write surface.
+
+## Session 50, 2026-05-31 (second-laptop bringup: soul folder, soul-rewire + soul-compare in Ledger, 1.4.2 ship)
+
+Migration session. Built the persistence layer that makes Charlie portable across Adrian's machines (primary at `~/repos/`, second laptop at `~/code/`).
+
+### What shipped
+
+- **`/soul/` folder added to the ledger repo.** Holds persona (`CLAUDE.md`), memory (49 behavioral feedback + project files plus `MEMORY.md` index), global `settings.json`, hook scripts (5), hookify rule. Original locations (`~/CLAUDE.md`, `~/.claude/settings.json`, `~/.claude/hooks/`, `~/.claude/projects/-home-adrian/memory/`, `~/.claude/hookify.descriptive-variable-names.local.md`) are now symlinks pointing into `soul/`. Excluded from the npm tarball via existing `files` whitelist (`dist/**` only). `soul/install.sh` is the symlink installer; idempotent with `--dry` preview. Commit `e78c052`.
+- **Ledger #205 `workspace-soul-rewire`.** Charlie-facing handoff doc with embedded bash script that wires up adjacent repos (`claude-skills`, `atelier`) plus an empty `settings.local.json`. Auto-detects `~/repos/` vs `~/code/`. On the new laptop, Charlie searches Ledger for "soul rewire", extracts the script, writes to `/tmp`, runs it. Initially scaffolded as `soul/post-install.sh` in the repo, then rolled back per Adrian's preference for "scripts live in Ledger docs."
+- **Ledger #206 `workspace-soul-compare`** (initially named `workspace-soul-report`; renamed after Adrian flagged "compare" as more accurate). Read-only audit. 11 sections: soul symlinks, personal skills, atelier, hooks + wiring, hookify rule, memory files, MCP servers, plugins, Ledger CLI + connectivity, machine-local config, repo freshness. v2 added baseline comparison: bash arrays embedded with the primary laptop's actual lists (11 skills, 5 hooks, 33 plugins). v3 added section 11 (git ahead/behind/dirty for ledger + claude-skills + atelier; resolves repo paths from existing symlinks).
+- **Doc #125 `workspace-dev-environment-setup` rewrite.** Canonical bringup procedure with current CLI command list, soul folder section, MCP registration step, publish prerequisite, ordered 11-step bringup sequence.
+- **Ledger 1.4.1 -> 1.4.2.** Commit `3b649ec`, tag `v1.4.2`, pushed to GitHub `origin/main`. npm publish blocked on Adrian's `npm login` (interactive OTP flow).
+- **`install.sh` root cleanup.** Dropped removed `ledger setup claude` and `ledger onboard` references from the dev install script. Added pointer to `soul/install.sh`.
+- **Two new behavioral memory files** auto-saved during the session: `feedback_css_shorthand_resets_subproperties` (generalizes the no-font-shorthand rule to all CSS shorthands) and `feedback_data_attributes_for_variants` (drop BEM modifier classes when a `data-*` attribute already serves the variant role). Committed as `2c7f68d` and pushed.
+- **Misrouted Session 13 fix.** Content about header search positioning + Bob email triage + Phase 4 PDP kickoff (dated 2026-05-23) was sitting uncommitted in this devlog by mistake. Moved to `~/repos/starbrite-shopify/docs/devlog.md` as Session 12.5 (backfill) between current S12 and S13. This devlog restored to clean.
+
+### Decisions locked
+
+- **Script-in-Ledger-doc pattern.** soul-rewire and soul-compare scripts live in Ledger docs (#205, #206), not in the repo. Charlie on a new machine searches Ledger, extracts the bash, writes to `/tmp`, runs. Iteration on the scripts is `update_document_from_file`, not `git commit && push && pull`. Reverted the initial `soul/post-install.sh` commit to enforce this.
+- **Soul folder accepted as public exposure (for now).** Adrian's explicit call after one-shot push-back. claude-skills and atelier remain private; ledger can flip later.
+- **Baseline embedded in the script, not pulled at runtime.** soul-compare's BASELINE_SKILLS / BASELINE_HOOKS / BASELINE_PLUGINS arrays are static snapshots from the primary laptop. Refresh cadence: edit the Ledger doc when sets change. Skills change rarely, plugins occasionally.
+- **Repo freshness uses readlink chain, not auto-detect.** Walks `~/CLAUDE.md` -> ledger repo, walks first skill symlink -> claude-skills repo, walks `~/.claude/plugins/atelier` -> atelier repo. Zero filesystem layout assumptions.
+- **Per-machine repos directory abstraction.** soul-rewire auto-detects `~/repos/` vs `~/code/`. soul/install.sh derives SOUL from `dirname "$0"`. soul-compare derives all three repo paths from existing symlinks. The three scripts converge on "never hardcode a parent directory."
+
+### Files touched (primary laptop)
+
+- `~/repos/ledger/install.sh` (drop removed wizard refs)
+- `~/repos/ledger/soul/*` (new folder, 60+ files)
+- `~/repos/ledger/package.json`, `package-lock.json` (1.4.1 -> 1.4.2)
+- `~/repos/ledger/docs/devlog.md` (this entry + the misrouted-S13 restore)
+- Ledger docs created/updated: #125 (rewrite), #205 (new), #206 (new, then renamed, then v2, then v3)
+- Local symlinks created at `~/CLAUDE.md`, `~/.claude/settings.json`, `~/.claude/hooks`, `~/.claude/projects/-home-adrian/memory`, `~/.claude/hookify.descriptive-variable-names.local.md`
+
+### Commits this session (ledger repo)
+
+- `e78c052` feat(soul): add /soul folder for persona + memory + Claude Code config
+- `3b649ec` 1.4.2 (npm version patch)
+- `2c7f68d` soul: sync two new behavioral feedback files
+
+All three pushed to `origin/main`. Tag `v1.4.2` pushed.
+
+### For next session
+
+- `npm publish --access public` once Adrian runs `npm login` (or sets a token in `~/.npmrc`)
+- On the second laptop: invoke "soul rewire" (Ledger #205), then "soul compare" (#206). Report should be all-ok modulo machine-local plugins.
+- Push `claude-skills 97ed287` (palette Layer 1 sync + checkpoint timecard step + zero-questions rule) — 1 commit ahead of origin, unpushed
+- Inspect `~/repos/atelier` (3 uncommitted files, pre-existing, not touched this session)
+- Optional: refresh soul-compare baselines if Adrian installs new plugins between machines
+
+
+## Session 51, 2026-06-08 (dashboard cleanup S110 + bloat-prevention rules)
+
+Cross-project meta session. Most work was on prevention infrastructure rather than ledger code.
+
+### What shipped
+
+- **Dashboard cleanup S110.** `project-status-dashboard` (#29) compressed from 76 KB / 236 lines (~5x over the 15 KB guardrail) to 9.7 KB / 151 lines (87.2% reduction, zero data loss; narrative archived to per-project devlogs which already had it). Push via `ledger update 29 -f` auto-verified by byte-compare.
+- **Two new behavioral memory files** saved to `soul/memory/`:
+  - `feedback_ledger_devlog_mirror_minimal`: per-project Ledger devlog mirrors are one-line-per-session checkpoints; repo `docs/devlog.md` is canonical for narrative. Captures the failure mode that killed `starbrite-shopify-devlog` (#189) at 220 KB (un-updatable due to Postgres statement-timeout).
+  - `feedback_dashboard_is_board_not_journal`: `#29` is a board with pointers, not a journal. Hard caps: 40 lines per card, 15 KB total, 280 chars `Last updated:`, 200 chars per `Current State` bullet, 500 chars any line. Run `wc -c` pre-push and ABORT if over.
+- **`session-checkpoint/SKILL.md` rewritten on the dashboard step.** Step 2 now embeds: an explicit "board not journal" framing, a copy-paste format template, a HARD caps table, and a REQUIRED `wc -c` pre-push command that aborts on violation. The old advisory-only "Dashboard #29 size guardrail" section was removed (the procedural version replaces it). Anti-Patterns section names three specific failure modes including the `Last updated -> Current State` accretion loop that produced both the S59 (91 KB) and S110 (76 KB) bloats.
+- **Starbrite-shopify primary-laptop sync.** `git fetch origin` showed local main 91 commits behind. Fast-forwarded via `git update-ref refs/heads/main refs/remotes/origin/main` (cleaner than checkout dance since local was 0 ahead). Adrian's laptop work was reachable: PR #16 (header-updates) merged, heritage band rebuild (S109 / repo S38) shipped, devlog updates.
+- **`client-feedback-bugs` branch created** in starbrite-shopify off the freshly-synced main. Adrian about to triage client testing feedback. `npm install` clean (no new deps from the 91 ingested commits).
+- **Handoff doc #207 audit.** `starbrite-shopify-machine-handoff` confirms code is fully on `origin/main`; only machine-local items are `npm install` (done) + Shopify CLI auth (will re-prompt on first `npm run dev`) + `.env` for data scripts (only needed when running migrations). Section 6 carry-over: ADA drawer fixes pending (raise `--c-nav-glass-bg` opacity ~0.85 for menu-text contrast, add `:focus-visible` rings, verify focus-trap/Esc); optional heritage section locale-key extraction + headline 84px raise; cleanup of redundant unpublished preprod theme `#191104024944`. None blocking the bug-fix branch.
+
+### Commits this session
+
+- ledger `f8390d1` feat(soul/memory): two new behavioral rules for doc-bloat prevention
+- claude-skills `4759a1e` feat(session-checkpoint): make dashboard size guardrail procedural
+
+Both local, not pushed yet (Adrian handles git manually per the skill rule). Prior S50 commits already pushed; `docs/devlog.md` carries the S50 entry uncommitted (from prior checkpoint) plus this S51 entry — owed to Adrian to commit + push.
+
+### Decisions locked
+
+- **Dashboard is a board, not a journal.** Hard caps, procedural pre-push check, explicit anti-patterns. Memory rule + skill carry both layers; if either layer fires, the bloat is caught.
+- **Per-project Ledger devlog mirrors are one-line-per-session.** Full narrative lives in the repo `docs/devlog.md`. The Ledger mirror is a search index, not a narrative store.
+- **The `Last updated:` line is replaced wholesale every session.** Prior content does NOT fold into `Current State` bullets — that was the specific accretion loop that bloated #29 twice. The historical record lives in the per-project devlog.
+
+### For next session
+
+- npm publish 1.4.2 (still blocked on Adrian's `npm login`).
+- Push ledger `f8390d1` + the older S50 commit `2c7f68d` (oh wait, `2c7f68d` was already pushed last checkpoint; verify).
+- Push claude-skills `4759a1e` (+ `97ed287` palette/checkpoint update from a prior session still unpushed).
+- Begin client-feedback-bugs fixes once Adrian provides the bug list. Fold ADA drawer fixes (handoff #207 §6.1) into the same branch if any client report touches drawer / contrast / keyboard nav.
+- `starbrite-shopify-devlog` (#189) still un-updatable at 220 KB. Worth a focused cleanup session: rebuild as one-line-per-session per the new mirror rule, archive the existing narrative-heavy version to a per-session child doc set.
+
