@@ -12,11 +12,16 @@
 - [feedback_commit_rules.md](feedback_commit_rules.md) — short messages, no AI co-author, no committing without approval
 - [feedback_interface_naming.md](feedback_interface_naming.md)
 - [feedback_session_briefing.md](feedback_session_briefing.md) — invoke dawn skill at session start, never skip briefing
+- [feedback_starbrite_one_word.md](feedback_starbrite_one_word.md) — write "Starbrite" as one word, never "Star brite"
+- [feedback_no_push_adrian_handles.md](feedback_no_push_adrian_handles.md) — never run shopify theme push/deploys; build+verify, then signal "ready to push", Adrian pushes
+- [feedback_no_browser_unless_asked.md](feedback_no_browser_unless_asked.md) — NEVER open/drive the browser (Chrome DevTools MCP) on my own initiative; only when Adrian explicitly tells me to; verify via lint/theme-check/reading code instead
 - [feedback_architecture_docs_structure.md](feedback_architecture_docs_structure.md) — architecture docs need visual diagrams (architecture, flowchart, sequence, ERD, DFD)
 - [feedback_never_bypass_rpc.md](feedback_never_bypass_rpc.md) — never direct .update() on documents table, always use RPC functions
 - [feedback_ledger_canonical_not_local_mirror.md](feedback_ledger_canonical_not_local_mirror.md) — canonical tracked docs (timecard, dashboard, devlog) live IN Ledger; never edit stale `~/.ledger/` local copies as canonical; search Ledger by name first
 - [feedback_dashboard_non_negotiable.md](feedback_dashboard_non_negotiable.md) — project-status-dashboard updated every checkpoint, never optional
 - [feedback_production_grade_solutions.md](feedback_production_grade_solutions.md) — always recommend industry-standard, production-grade solutions
+- [feedback_prefer_fallback_over_consolidation.md](feedback_prefer_fallback_over_consolidation.md) — on customer-facing critical paths keep the native fallback, don't consolidate onto one third-party dependency
+- [feedback_extraction_pattern_must_match_failures.md](feedback_extraction_pattern_must_match_failures.md) — an evidence-gathering regex must match the malformed cases too, or it confirms the wrong hypothesis
 - [feedback_explain_acronyms.md](feedback_explain_acronyms.md) — always explain acronyms and tech terms, Adrian is learning RAG
 - [feedback_never_force_push_main.md](feedback_never_force_push_main.md) — NEVER amend pushed commits or force-push to main
 - [feedback_guided_implementation.md](feedback_guided_implementation.md) — stop before each step, explain what/why/how, Adrian runs SQL himself
@@ -32,12 +37,14 @@
 - [feedback_agent_state_not_project_docs.md](feedback_agent_state_not_project_docs.md) — agent session-handoff and continuity files are operational state, never project documentation; flag and exclude from inventories and client deliverables
 - [feedback_class_rename_search_js_too.md](feedback_class_rename_search_js_too.md) — class renames must grep both static markup AND JS strings (className =, innerHTML, template literals); static-only sweeps leave orphan refs in JS-generated elements
 - [feedback_no_px_for_sizing.md](feedback_no_px_for_sizing.md) — use rem (and svh/dvw) instead of px in CSS sizing; apply to any line touched, don't blanket-rewrite legacy mockups
+- [feedback_breakpoints_use_px.md](feedback_breakpoints_use_px.md) — @media breakpoints use px (the one place px is allowed); convert rem to EXACT px equivalent (48rem->768px, 56.25rem->900px), don't homogenize to 900px
+- [feedback_image_sizing_height_only_aspect.md](feedback_image_sizing_height_only_aspect.md) — size images by ONE dimension + other auto, never both; in flex, set flex-shrink:0 on the shrinking ancestor or width:auto fills the squeezed box and deforms the image
 - [feedback_pill_radius_only_on_squares.md](feedback_pill_radius_only_on_squares.md) — `--pill-border-radius: 50%` only renders as circle on SQUARE elements; non-square pills need literal half-height radius or a separate `--pill-shape-radius` token
 - [feedback_container_query_fixed_positioning.md](feedback_container_query_fixed_positioning.md) — for drawers/overlays inside a `container-type: inline-size` wrapper, use `position: absolute` relative to a known canvas-root; browsers don't reliably contain `position: fixed` per spec
 - [feedback_breakpoints_single_block.md](feedback_breakpoints_single_block.md) — all breakpoint overrides collect in ONE @media block at the bottom of a stylesheet; do NOT nest @media inside per-component BEM rules
 - [feedback_no_font_shorthand.md](feedback_no_font_shorthand.md) — write font properties (font-family / -style / -weight / -size, line-height) as separate longhand declarations; do NOT use the `font:` shorthand
 - [feedback_css_shorthand_resets_subproperties.md](feedback_css_shorthand_resets_subproperties.md) — generalizes the font ban: ALL CSS shorthands (transition / background / font / border / flex) silently reset un-named sub-properties to initial; use longhand when composing across rules
-- [feedback_data_attributes_for_variants.md](feedback_data_attributes_for_variants.md) — when a `data-X="<variant>"` attribute already serves as JS hook AND CSS scoping selector, the matching `c-block__element--<variant>` modifier class is redundant; drop it, use attribute selector in CSS
+- [feedback_data_attributes_for_variants.md](feedback_data_attributes_for_variants.md) — style component variants/states with `data-*` attributes (`data-variant`, etc.) + attribute selectors in CSS, NOT BEM modifier classes (`c-block--variant`); add the attribute fresh if needed
 - [feedback_assets_image_naming.md](feedback_assets_image_naming.md) — all image assets prefixed `image-<category>-<descriptor>` (background / blog / icon / logo / portrait / product / project) for prefix-as-fake-folder in flat dirs
 - [feedback_component_css_naming.md](feedback_component_css_naming.md) — `component-common-<name>.css` for reused components, `component-<scope>-<name>.css` for page-scoped; BEM blocks scope-prefix only on collision
 - [feedback_derived_data_over_manual_maps.md](feedback_derived_data_over_manual_maps.md) — derive relationships via filters/transforms (`handleize`, `downcase`, system fields) instead of hardcoded lookup maps; hardcoded values only when expressing intent, not data
@@ -47,6 +54,8 @@
 - [feedback_common_prefix_snippets.md](feedback_common_prefix_snippets.md) — snippets paired with `component-common-<name>.css` get `common-<name>-*.liquid` naming so the snippet + stylesheet are visibly part of the same component
 - [feedback_svg_icons_as_assets.md](feedback_svg_icons_as_assets.md) — SVG icons live in `theme/assets/` as `.svg` files, referenced via `{{ 'name.svg' | inline_asset_content }}`; snippets are reserved for Liquid with composition/locale/logic
 - [feedback_short_bullet_explanations.md](feedback_short_bullet_explanations.md) — explain code in 3-5 short bullets with a one-line "net effect" close; avoid section-by-section walkthroughs unless explicitly asked
+- [feedback_facts_first_then_detail.md](feedback_facts_first_then_detail.md) — lead with a bare facts block (have / missing / blocked), one clause per line; all reasoning goes in separate sections below
+- [feedback_verified_answer_structure.md](feedback_verified_answer_structure.md) — full answer shape for anything he acts on directly: facts block, table, verification against independent sources, usable deliverable, held-action close
 - [feedback_css_first_over_js.md](feedback_css_first_over_js.md) — prefer CSS over JS whenever both can express the behavior; JS only for async/data work and `data-*` attribute toggles that drive CSS state
 - [feedback_pseudo_elements_for_decorative_overlays.md](feedback_pseudo_elements_for_decorative_overlays.md) — backdrops, scrims, decorative shapes go on `::before`/`::after` pseudo-elements, not real DOM nodes
 - [feedback_css_transition_same_positioning_model.md](feedback_css_transition_same_positioning_model.md) — CSS animations are only smooth if positioning model is identical in both states (same containing block, anchor side, position type); changing parent's position mid-animation jumps because position isn't transitionable
@@ -55,12 +64,23 @@
 - [feedback_shopify_block_name_25char_limit.md](feedback_shopify_block_name_25char_limit.md) — Shopify section schema `blocks[].name` is capped at 25 chars; theme-check doesn't flag it but `shopify theme push` rejects with "Invalid block: name is too long (max 25 characters)"
 - [feedback_svg_composited_layer_repaint.md](feedback_svg_composited_layer_repaint.md) — SVG stroke-dashoffset updates inside a transformed/composited ancestor are skipped by Chrome's compositor (DevTools-search makes it work); two-part fix is `setAttribute` over `style.X` plus `transform: translateZ(0)` on the SVG to promote it to its own layer
 - [feedback_no_obvious_comments.md](feedback_no_obvious_comments.md) — don't pad code with comments that restate what declarations / identifiers already say; only comment non-obvious WHY
+- [feedback_no_verbose_comments.md](feedback_no_verbose_comments.md) — NO multi-line explanatory comments in code (repeated ask); default to none, terse single-line at most; put rationale in chat not the file
 - [feedback_ledger_devlog_mirror_minimal.md](feedback_ledger_devlog_mirror_minimal.md) — per-project Ledger devlog mirrors are one-line-per-session checkpoints; repo `docs/devlog.md` is canonical for narrative; never paste session bodies into the Ledger mirror
 - [feedback_dashboard_is_board_not_journal.md](feedback_dashboard_is_board_not_journal.md) — `project-status-dashboard` #29 is a glanceable status board with pointers; each card ~40 lines max, total under 15 KB; narrative goes to repo devlog. Run `wc -c` pre-push and ABORT if over.
 - [feedback_pp_store_means_preprod.md](feedback_pp_store_means_preprod.md) — in Starbrite work "pp store" = preprod (starbrite-preprod.myshopify.com), NOT perdomo-studio-dev; "pp" abbreviates "pre-prod"
 - [feedback_simplest_solution_no_looping.md](feedback_simplest_solution_no_looping.md) — minimal fix on visual/CSS work; don't over-engineer or loop; confirm target after 1-2 failed tries; revert fully when asked
+- [feedback_skip_ceremony_when_pattern_exists.md](feedback_skip_ceremony_when_pattern_exists.md) — when the pattern already exists in the repo, skip brainstorming/spec/plan and mirror it; gate ceremony on novelty, not size
 - [feedback_email_signature.md](feedback_email_signature.md) — end every email draft with "Best, / Adrian Perdomo / Perdomo Studio" verbatim
+- [feedback_invoice_email_template.md](feedback_invoice_email_template.md) — standard invoice email: no hours/rate/total in the body, one plain-language paragraph of the week's work, decisions and legal items go to the Thursday call instead
 - [feedback_announce_before_editing.md](feedback_announce_before_editing.md) — announce + get approval before edits; read/analyze freely; one approval = one scope; client/prod changes always explicit
+- [feedback_timecard_collapse_after_invoice_sent.md](feedback_timecard_collapse_after_invoice_sent.md) — only collapse a timecard week to total-only after its invoice is confirmed sent; keep current + unsent weeks detailed
+- [feedback_timecard_entry_rules.md](feedback_timecard_entry_rules.md) — one block per work-day (sleep-cycle boundary, not midnight); uniform bold header, no clock times; hours always {{TODO}}, never derived from times
+- [feedback_long_session_collapses_dates.md](feedback_long_session_collapses_dates.md) — a session left open across days write-ups to ONE date; recover the real span from per-message JSONL timestamps, not file mtime
+- [feedback_invoices_are_billing_source_of_truth.md](feedback_invoices_are_billing_source_of_truth.md) — reconcile billing from invoice PDFs, never the hand-maintained running total; it was ~7 weeks / $11,452 stale
+- [feedback_single_source_per_tracked_fact.md](feedback_single_source_per_tracked_fact.md) — a changing value lives in ONE place per doc; other mentions point at it. Dashboard held two billing states an invoice cycle apart
+- [feedback_compression_must_not_drop_sole_copy.md](feedback_compression_must_not_drop_sole_copy.md) — when condensing, check each fragment of a mixed bullet; sole-copy todos and paths must survive or be raised
+- [feedback_dont_homogenize_different_types.md](feedback_dont_homogenize_different_types.md) — don't standardize structure across genuinely different kinds of things; ask what breaks before proposing a consistency pass
+- [feedback_timezone_pacific_not_eastern.md](feedback_timezone_pacific_not_eastern.md) — Adrian is in California (Pacific); machine/injected clock is Eastern and runs ahead; resolve real date with `TZ=America/Los_Angeles date` before stamping devlogs/timecards/billing
 
 ## Projects
 - [project_starbrite_consolidation.md](project_starbrite_consolidation.md) — Starbrite redesign consolidates instincts.starbrite.com + www.starbrite.com into one Shopify store; design system covers editorial + commerce
@@ -68,5 +88,6 @@
 - [project_starbrite_client_provided_files.md](project_starbrite_client_provided_files.md) — Plytix CSV and Star Tron Brand Voice doc in base research are client-provided; treat as authoritative client inputs, not our research output
 - [project_starbrite_contacts.md](project_starbrite_contacts.md) — current Starbrite POCs are Turner Burwick + Bob (since 2026-05-04); Kouri Carey no longer active; invoices stay name-free
 - [project_starbrite_stores.md](project_starbrite_stores.md) — Shopify stores: Adrian's dev (perdomo-studio-dev) for development; client (starbritedev) for archive pull + eventual push, staff access pending
+- [project_starbrite_bv_styling_portal_only.md](project_starbrite_bv_styling_portal_only.md) — Bazaarvoice widget styling goes in the BV portal Style Editor, never theme CSS; token values to type in are listed
 - [project_starbrite_metaobject_ownership.md](project_starbrite_metaobject_ownership.md) — prod metaobjects owned by `Shopify Claude Connector App` (claude.ai App Store integration). Preprod blocks CLI's connector from `metaobjectDefinitionCreate` for ANY type; need Custom App via admin or hand to Kouri. Sandbox permissive.
 - [project_freelance_tax_2026.md](project_freelance_tax_2026.md) — 2026 freelance tax tracking; Q2 paid 2026-06-15 ($2,500, conf 222-6566-7589-6445); tax system design paused at Section 1; transient specs at `~/.ledger/transient/2026-06-14-freelance-tax-prep/`

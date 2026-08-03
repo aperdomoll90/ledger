@@ -4,9 +4,7 @@ description: Current and historical points of contact on the Starbrite engagemen
 type: project
 originSessionId: 0ae94323-e42c-4fed-aba1-851786f9fe39
 ---
-**Current project leads (since 2026-05-04):** Turner Burwick (new PM, introduced weekly Thursday 2:30 PM cadence) + Bob (last name unconfirmed). All work reports and weekly check-ins go to Turner and Bob.
-
-**Previous POC (no longer active):** Kouri Carey. Historical references in Ledger (teak campaign devlog, week-1 invoice delivery notes, etc.) are correct as-is and should not be rewritten — those record past state.
+**Current project leads:** Turner Burwick (PM, introduced weekly Thursday 2:30 PM cadence on 2026-05-04) + Bob (last name unconfirmed) + Kouri Carey. As of 2026-06-29 Adrian confirmed Kouri is still active alongside Turner; invoices and work reports go to Turner and Kouri (Bob as needed). NOTE: this reverses the earlier "Kouri no longer active" state recorded 2026-05-11. The timecard #198 and any Ledger doc still calling Kouri a "previous/inactive" POC are now stale and should be corrected when next touched.
 
 **Invoice "Bill To" convention:** company-only ("Starbrite / 4041 SW 47th Ave / 33314"). Never include individual names on the invoice document itself.
 
